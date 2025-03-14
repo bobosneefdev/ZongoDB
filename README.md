@@ -1,8 +1,13 @@
 # ZongoDB
 Zod schemas + MongoDB = <3
 
+# Install
+```cmd
+npm install zongodb
+```
+
 # Config
-- Create a zongo_config.json in the root of your directory.
+Create and configure zongo_config.json in the root of your project. It's contents must be parsable by this Zod schema:
 ```ts
 // Your config file must be parsable by this Zod schema.
 z.object({
@@ -18,4 +23,3 @@ z.object({
     ]),
 });
 ```
-
