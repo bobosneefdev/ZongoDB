@@ -1,9 +1,6 @@
-export enum LogLevel {
-    ERROR = "error",
-    WARN = "warn",
-    INFO = "info",
-    DEBUG = "debug",
-}
+import { ZongoConfig } from "./config";
+
+type LogLevel = ZongoConfig["LOG_LEVEL"];
 
 export class ZongoLog {
     private static getLogTag(logLevel: LogLevel) {
@@ -23,18 +20,18 @@ export class ZongoLog {
     }
 
     static error(...messages: unknown[]): void {
-        console.error(this.getLogTag(LogLevel.ERROR), this.convertInput(...messages));
+        console.error(this.getLogTag("error"), this.convertInput(...messages));
     }
 
     static warn(...messages: unknown[]): void {
-        console.warn(this.getLogTag(LogLevel.WARN), this.convertInput(...messages));
+        console.warn(this.getLogTag("warn"), this.convertInput(...messages));
     }
 
     static info(...messages: unknown[]): void {
-        console.info(this.getLogTag(LogLevel.INFO), this.convertInput(...messages));
+        console.info(this.getLogTag("info"), this.convertInput(...messages));
     }
 
     static debug(...messages: unknown[]): void {
-        console.debug(this.getLogTag(LogLevel.DEBUG), this.convertInput(...messages));
+        console.debug(this.getLogTag("debug"), this.convertInput(...messages));
     }
 }

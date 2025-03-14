@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { z, ZodObject } from 'zod';
 import { ZongoLog } from './logger';
-import { kConfig } from './config';
+import { kZongoConfig } from './config';
 import { ZongoUtil } from './util';
 
 type ZongoDBSafeUpdate<T extends ZodObject<any>> = {
@@ -33,7 +33,7 @@ export class ZongoDB<
         this.name = name;
         this.schemas = schemas;
         this.client = new mongoDB.MongoClient(
-            kConfig.MONGO_URI,
+            kZongoConfig.MONGO_URI,
             {
                 minPoolSize: 6,
                 maxPoolSize: 10,
@@ -48,7 +48,7 @@ export class ZongoDB<
             },
             {} as Record<keyof Schemas, mongoDB.Collection>
         );
-        this.backupPath = path.join(kConfig.BACKUP_DIR, name);
+        this.backupPath = path.join(kZongoConfig.BACKUP_DIR, name);
         ZongoLog.debug(`Constructed database "${name}"`);
     }
 
@@ -567,7 +567,7 @@ export class ZongoDB<
         collection: K,
         maxBackups: number
     ) {
-        const dir = path.join(kConfig.BACKUP_DIR, collection);
+        const dir = path.join(kZongoConfig.BACKUP_DIR, collection);
         if (!fs.existsSync(dir)) {
             ZongoLog.error(`Backup directory does not exist: ${dir}`);
             return 0;

@@ -1,17 +1,24 @@
 import fs from "fs";
 import { z } from "zod";
 
-const kConfigFilePath = "./zongo_config.json";
+const kZongoConfigFilePath = "./zongo_config.json";
 
-const zConfig = z.object({
+const zZongoConfig = z.object({
     MONGO_URI: z.string()
         .default("mongodb://localhost:27017"),
     BACKUP_DIR: z.string()
         .default("./ZongoDB/backups"),
+    LOG_LEVEL: z.enum([
+        "error",
+        "warn",
+        "info",
+        "debug"
+    ]),
 });
+export type ZongoConfig = z.infer<typeof zZongoConfig>;
 
-if (!fs.existsSync(kConfigFilePath)) {
-    throw new Error(`${kConfigFilePath} not found in cwd. Please create a config.json file in the root directory.`);
+if (!fs.existsSync(kZongoConfigFilePath)) {
+    throw new Error(`${kZongoConfigFilePath} not found in cwd. Please create a config.json file in the root directory.`);
 }
 
-export const kConfig = zConfig.parse(JSON.parse(fs.readFileSync(kConfigFilePath, "utf-8")));
+export const kZongoConfig = zZongoConfig.parse(JSON.parse(fs.readFileSync(kZongoConfigFilePath, "utf-8")));
