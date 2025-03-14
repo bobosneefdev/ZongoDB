@@ -3,7 +3,7 @@ Zod schemas + MongoDB = <3
 
 # Install
 ```cmd
-npm install zongodb
+npm install @bobosneefdev/zongodb
 ```
 
 # Config

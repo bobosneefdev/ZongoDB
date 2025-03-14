@@ -1,5 +1,5 @@
 {
-    "name": "zongodb",
+    "name": "@bobosneefdev/zongodb",
     "version": "1.0.0",
     "description": "Zod schemas + MongoDB",
     "main": "./dist/index.js",
