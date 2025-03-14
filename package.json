@@ -1,0 +1,43 @@
+{
+    "name": "zongodb",
+    "version": "1.0.0",
+    "description": "Zod schemas + MongoDB",
+    "main": "./dist/index.js",
+    "module": "./dist/index.mjs",
+    "types": "./dist/index.d.ts",
+    "directories": {
+        "test": "test"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com"
+    },
+    "scripts": {
+        "build": "tsup",
+        "test": "bun test"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/bobosneefdev/ZongoDB.git"
+    },
+    "keywords": [
+        "mongodb",
+        "zod"
+    ],
+    "author": "bobosneefdev",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/bobosneefdev/ZongoDB/issues"
+    },
+    "homepage": "https://github.com/bobosneefdev/ZongoDB#readme",
+    "devDependencies": {
+        "@types/jest": "^29.5.14",
+        "@types/node": "^22.13.10",
+        "tsup": "^8.4.0",
+        "typescript": "^5.8.2"
+    },
+    "dependencies": {
+        "dotenv": "^16.4.7",
+        "mongodb": "^6.14.2",
+        "zod": "^3.24.2"
+    }
+}

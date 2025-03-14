@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "strict": true,
+        "noImplicitAny": true,
+        "esModuleInterop": true,
+        "strictNullChecks": true,
+        "target": "ES2024",
+        "moduleResolution": "node",
+        "module": "ES6",
+        "declaration": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "outDir": "dist",
+    },
+    "include": ["src"],
+    "exclude": [
+        "node_modules",
+        "dist",
+        "test"
+    ]
+}
