@@ -635,7 +635,7 @@ export class ZongoDB<
         const backupPath = path.join(
             this.backupDir,
             collection,
-            new Date().toISOString().replaceAll(":", "-")
+            new Date().toISOString().replace(/:/g, "-")
         );
         fs.mkdirSync(
             backupPath,

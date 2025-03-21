@@ -4,7 +4,7 @@
         "noImplicitAny": true,
         "esModuleInterop": true,
         "strictNullChecks": true,
-        "target": "ES2024",
+        "target": "ES6",
         "moduleResolution": "node",
         "module": "ES6",
         "declaration": true,

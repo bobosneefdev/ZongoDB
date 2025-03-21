@@ -18,7 +18,7 @@ const zZongoConfig = z.object({
 export type ZongoConfig = z.infer<typeof zZongoConfig>;
 
 if (!fs.existsSync(kZongoConfigFilePath)) {
-    throw new Error(`${kZongoConfigFilePath} not found in cwd. Please create a config.json file in the root directory.`);
+    throw new Error(`${kZongoConfigFilePath} not found in cwd. Please create config json at relative path "${kZongoConfigFilePath}".`);
 }
 
 export const kZongoConfig = zZongoConfig.parse(JSON.parse(fs.readFileSync(kZongoConfigFilePath, "utf-8")));
