@@ -7,20 +7,25 @@ import { ZongoLog } from './logger';
 import { kZongoConfig } from './config';
 import { ZongoUtil } from './util';
 
-type ZongoDBSafeUpdate<T extends ZodObject<any>> = {
-    $set?: mongoDB.UpdateFilter<z.infer<T>>["$set"],
-    $unset?: Array<string | keyof z.infer<T>>,
+export type ZongoTransformUpdate = {
+    path: string | null;
+    transform: (value: any) => any;
 };
 
+type AddObjectIdToObject<T extends Object> = T & {
+    _id: mongoDB.ObjectId;
+}
+
 export class ZongoDB<
-    Schemas extends Record<string, z.ZodObject<any>>
+    Schemas extends Readonly<Record<string, z.ZodObject<any>>>
 > {
     readonly name: string;
     readonly schemas: Schemas;
-    private client: mongoDB.MongoClient;
-    private db: mongoDB.Db;
-    private collections: Record<keyof Schemas, mongoDB.Collection>;
-    private backupPath: string;
+    readonly client: mongoDB.MongoClient;
+    /** Interacting here is not reccomended unless you know what you're doing! */
+    readonly db: mongoDB.Db;
+    private collections: Readonly<Record<keyof Schemas, mongoDB.Collection>>;
+    private backupDir: string;
 
     constructor(
         name: string,
@@ -31,6 +36,11 @@ export class ZongoDB<
         }
     ) {
         this.name = name;
+        for (const schema of Object.values(schemas)) {
+            if ("_id" in schema.shape) {
+                throw new Error("Schema cannot contain _id field!");
+            }
+        }
         this.schemas = schemas;
         this.client = new mongoDB.MongoClient(
             kZongoConfig.MONGO_URI,
@@ -48,367 +58,472 @@ export class ZongoDB<
             },
             {} as Record<keyof Schemas, mongoDB.Collection>
         );
-        this.backupPath = path.join(kZongoConfig.BACKUP_DIR, name);
+        this.backupDir = path.join(kZongoConfig.BACKUP_DIR, name);
         ZongoLog.debug(`Constructed database "${name}"`);
     }
 
-    async getAllCollectionInfos() {
+    /**
+     * @returns Array of your databases collection meta-datas.
+     */
+    async getCollectionInfos() {
         return await this.db.listCollections().toArray() as Array<mongoDB.CollectionInfo>;
     }
 
-    async close() {
-        await this.client.close();
+    /**
+     * Closes mongoClient connection.
+     * @param force - If true, forcefully closes the connection.
+     * */
+    async close(force?: boolean) {
+        await this.client.close(force);
     }
 
-    /**
-     * Inserts document(s) into the collection.
-     * @validates Document
-     */
-    async safeInsert<Collection extends keyof Schemas & string>(
+    async insertOne<
+        Collection extends keyof Schemas & string
+    >(
         collection: Collection,
-        documents: Array<z.infer<Schemas[Collection]>>
+        doc: z.infer<Schemas[Collection]>,
+        opts?: mongoDB.InsertOneOptions
     ) {
-        try {
-            return await this.collections[collection].insertMany(documents.map(d => this.schemas[collection].parse(d)));
-        }
-        catch(error) {
-            ZongoLog.error(`Error inserting document into collection "${collection}"`, error);
-            return null;
-        }
+        const insert = ZongoUtil.removeUndefinedValues(
+            this.schemas[collection].parse(doc)
+        );
+        return await this.collections[collection].insertOne(
+            insert,
+            opts
+        );
+    }
+
+    async insertMany<
+        Collection extends keyof Schemas & string
+    >(
+        collection: Collection,
+        docs: Array<z.infer<Schemas[Collection]>>,
+        opts?: mongoDB.InsertOneOptions
+    ) {
+        const inserts = docs.map(doc => ZongoUtil.removeUndefinedValues(
+            this.schemas[collection].parse(doc)
+        ));
+        return await this.collections[collection].insertMany(
+            inserts,
+            opts
+        );
     }
 
     /**
-     * Update document(s) in the collection based on the query.
-     * @validates Query
-     * @validates Update
-     * @returns number of documents changed
+     * Transform the data within a document.
+     * @param collection - Name of the collection to insert to.
+     * @param query - Path/values to match the document to.
+     * @param update - Transformations to apply to given paths
+     * @returns Previous/Updated data on success, true if no doc found, false if issue.
      */
-    async safeUpdate<K extends keyof Schemas & string>(
-        collection: K,
+    async transformOne<
+        Collection extends keyof Schemas & string,
+        Update extends Array<ZongoTransformUpdate>
+    >(
+        collection: Collection,
         query: Record<string, any>,
-        update: ZongoDBSafeUpdate<Schemas[K]> | Array<{
-            path: string | null;
-            transform: (value: any) => any;
-        }>,
-        opts?: {
-            onlyOne?: boolean;
-            upsert?: boolean;
-            upsertDefault?: z.infer<Schemas[K]>;
-        }
-    ) {
+        update: Update,
+    ): Promise<
+        {
+            previous: z.infer<Schemas[Collection]>;
+            updated: z.infer<Schemas[Collection]>;
+        } | boolean
+    > {
         this.verifyQuery(collection, query);
-        const updateFunc = opts?.onlyOne ?
-            this.updateOne.bind(this) :
-            this.updateMany.bind(this);
-        const updateIsArray = Array.isArray(update);
-        if (!updateIsArray && opts?.upsert === true) {
-            if (
-                !update.$set ||
-                update.$unset ||
-                Object.keys(update.$set).length !== Object.keys(this.schemas[collection].shape).length
-            ) {
-                throw new Error(`Use of upsert only supports a complete $set option. Nothing else.`);
+        const document = await this.collections[collection].findOne(query);
+        if (!document) {
+            return true;
+        }
+        const previous = this.schemas[collection].parse(document);
+        const updated = await this.transformAndUpdateDoc(
+            collection,
+            query,
+            document,
+            update
+        );
+        if (!updated) {
+            return false;
+        }
+        return {
+            previous: previous,
+            updated: updated
+        };
+    }
+
+    /**
+     * Transform the data within a document.
+     * @param collection - Name of the collection to insert to.
+     * @param query - Path/values to match the document to.
+     * @param update - Transformations to apply to given paths.
+     * @param detailed - Determines whether you get the full array of changed datas, which could be massive. If false you get number of changed docs.
+     * @returns Previous/Updated datas on success, true if no docs found, false if issue.
+     */
+    async transformMany<
+        Collection extends keyof Schemas & string,
+        Update extends Array<ZongoTransformUpdate>,
+        Detailed extends boolean
+    >(
+        collection: Collection,
+        query: Record<string, any>,
+        update: Update,
+        detailed: Detailed,
+    ): Promise<
+        (
+            Detailed extends true ? {
+                success: Array<{
+                    previous: z.infer<Schemas[Collection]>;
+                    updated: z.infer<Schemas[Collection]>;
+                }>
+                errors: number,
+            } : {
+                success: number,
+                errors: number,
             }
-            this.schemas[collection].parse(update.$set);
-            const result = await updateFunc(
+        ) | boolean
+    > {
+        this.verifyQuery(collection, query);
+        const cursor = this.collections[collection].find(query);
+        const documents = await cursor.toArray();
+        if (!documents.length) {
+            return true;
+        }
+        const success: Array<true | {
+            previous: z.infer<Schemas[Collection]>;
+            updated: z.infer<Schemas[Collection]>;
+        }> = [];
+        let errors: number = 0;
+        for (const document of documents) {
+            const previous = this.schemas[collection].parse(document);
+            const updated = await this.transformAndUpdateDoc(
                 collection,
                 query,
-                update as any,
+                document,
+                update
+            );
+            if (!updated) {
+                errors++;
+            }
+            else if (detailed === true) {
+                success.push({
+                    previous: previous,
+                    updated: updated,
+                });
+            }
+            else {
+                success.push(true);
+            }
+        }
+        return {
+            success: detailed === true ? success : success.length,
+            errors: errors,
+        } as any;
+    }
+
+    /** returns null on error */
+    private async transformAndUpdateDoc<
+        Collection extends keyof Schemas & string,
+        Update extends Array<ZongoTransformUpdate>
+    >(
+        collection: Collection,
+        query: Record<string, any>,
+        document: mongoDB.WithId<mongoDB.BSON.Document>,
+        update: Update
+    ): Promise<AddObjectIdToObject<z.infer<Schemas[Collection]>> | null> {
+        const docId = document._id;
+        if (!docId) {
+            throw new Error("Document doesn't have ID! Can't transform! SHOULDN'T HAPPEN!");
+        }
+        for (const { path, transform } of update) {
+            if (!path) {
+                document = transform(document);
+            }
+            else {
+                ZongoUtil.updateValueInObject(
+                    document,
+                    path,
+                    transform
+                );
+            }
+        }
+        const { set, unset } = ZongoUtil.separateSetAndUnset(
+            this.schemas[collection].parse(document) // this will throw if the user has screwed up
+        );
+        const result = await this.collections[collection].updateOne(
+            {
+                "_id": docId,
+                ...query,
+            },
+            {
+                "$set": set,
+                "$unset": unset,
+            },
+        );
+        if (!result?.acknowledged) {
+            ZongoLog.error(`Error updating document in collection "${collection}"`, result);
+            return null;
+        }
+        return document;
+    }
+
+    /**
+     * Update document in the collection.
+     * @param collection - Name of the collection to update.
+     * @param query - Query to find the document to update.
+     * @param update - Record of paths/new values.
+     * @param opts.upsert - If true, insert a new document if no document matches the query. (REQUIRES COMPLETE $SET, NOTHING ELSE ALLOWED)
+     * @returns Document changed count, or null on failure.
+     * @throws If zod parsing fails for the query, update, or existing document (if using transform type), or if upsert is attempted on incomplete document.
+     */
+    async updateOne<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        query: Record<string, any>,
+        update: Record<string, any>,
+        opts?: {
+            upsert?: boolean;
+        }
+    ): Promise<mongoDB.UpdateResult> {
+        this.verifyQuery(collection, query);
+        if (opts?.upsert === true) {
+            const parsed = this.schemas[collection].safeParse(update);
+            if (!parsed.success) {
+                throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
+            }
+            const {set, unset} = ZongoUtil.separateSetAndUnset(update);
+            return await this.collections[collection].updateOne(
+                query,
+                {
+                    $set: set,
+                    $unset: unset,
+                },
                 {
                     upsert: true
                 }
             );
-            if (!result?.acknowledged) {
-                ZongoLog.error(`Error upserting document into collection "${collection}"`, result);
-            }
-            return result?.upsertedCount ? 1 : 0;
         }
-        try {
-            if (!updateIsArray) {
-                for (const [operation, options] of Object.entries(update)) {
-                    for (const [path, value] of Object.entries(options)) {
-                        const valueSchema = this.getSchemaAtPath(collection, path);
-                        if (!valueSchema) {
-                            throw new Error(`Invalid path ${path}`);
-                        }
-                        else if (operation === "$set") {
-                            valueSchema.parse(value);
-                        }
-                        else if (operation === "$unset") {
-                            valueSchema.parse(undefined);
-                        }
-                    }
-                }
-                const result = await updateFunc(
-                    collection,
-                    query,
-                    update as any
-                );
-                return result ? Math.max(result.modifiedCount, result.upsertedCount) : 0;
-            }
-            else {
-                const docs = (
-                    opts?.onlyOne ?
-                    [await this.findOne(collection, query)].filter(doc => doc !== null) :
-                    await this.findMany(collection, query)
-                );
-                for (const doc of docs) {
-                    for (const { path, transform } of update) {
-                        if (!path) {
-                            transform(doc);
-                        }
-                        else {
-                            ZongoUtil.updateValueInObject(
-                                doc,
-                                path,
-                                transform
-                            );
-                        }
-                    }
-                }
-                let changedCount = 0;
-                for (const doc of docs) {
-                    this.schemas[collection].parse(doc);
-                    const result = await this.updateOne(
-                        collection,
-                        {
-                            "_id": doc._id
-                        },
-                        {
-                            "$set": doc
-                        },
-                        {
-                            upsert: opts?.upsert
-                        }
-                    );
-                    if (result?.modifiedCount) {
-                        changedCount++;
-                    }
-                }
-                return changedCount;
-            }
-        }
-        catch(error) {
-            ZongoLog.error("safeUpdate failed: ", error);
-            return null;
-        }
-    }
-
-    /**
-     * NOT SCHEMA SAFE.
-     * Updates a single document in the collection based on the query.
-     * @validates Query
-     * @returns 
-     */
-    async updateOne<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        update: mongoDB.UpdateFilter<z.infer<Schemas[K]>>,
-        options?: mongoDB.UpdateOptions
-    ) {
-        this.verifyQuery(collection, query);
-        for (const operationOptions of Object.values(update)) {
-            for (const path of Object.keys(operationOptions)) {
-                this.getSchemaAtPath(collection, path);
-            }
-        }
-        try {
+        else {
+            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
+            this.verifySet(collection, set);
+            this.verifyUnset(collection, unset);
             return await this.collections[collection].updateOne(
                 query,
-                update as any,
-                options
+                {
+                    $set: set,
+                    $unset: unset,
+                },
             );
-        }
-        catch (error) {
-            ZongoLog.error("updateOne failed: ", error);
-            return null;
         }
     }
 
     /**
-     * NOT SCHEMA SAFE.
-     * Updates multiple documents in the collection based on the query.
-     * @validates Query, Update Paths (NOT THE DATA YOU ARE ASSIGNING TO THE PATHS THOUGH)
-     * */
-    async updateMany<K extends keyof Schemas & string>(
-        collection: K,
+     * Update documents in the collection.
+     * @param collection - Name of the collection to update.
+     * @param query - Query to find the documents to update.
+     * @param update - Record of paths/new values.
+     * @param opts.upsert - If true, insert a new document if no document matches the query. (REQUIRES COMPLETE $SET, NOTHING ELSE ALLOWED)
+     * @returns Documents changed count, or null on failure.
+     * @throws If zod parsing fails for the query, update, or existing document (if using transform type), or if upsert is attempted on incomplete document.
+     */
+    async updateMany<Collection extends keyof Schemas & string>(
+        collection: Collection,
         query: Record<string, any>,
-        update: mongoDB.UpdateFilter<z.infer<Schemas[K]>>,
-        options?: mongoDB.UpdateOptions
-    ) {
-        this.verifyQuery(collection, query);
-        for (const operationOptions of Object.values(update)) {
-            for (const path of Object.keys(operationOptions)) {
-                this.getSchemaAtPath(collection, path);
-            }
+        update: Record<string, any>,
+        opts?: {
+            upsert?: boolean;
         }
-        try {
-            return await this.collections[collection].updateMany(
+    ): Promise<mongoDB.UpdateResult> {
+        this.verifyQuery(collection, query);
+        if (opts?.upsert === true) {
+            const parsed = this.schemas[collection].safeParse(update);
+            if (!parsed.success) {
+                throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
+            }
+            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
+            return await this.collections[collection].updateOne(
                 query,
-                update as any,
-                options
+                {
+                    $set: set,
+                    $unset: unset,
+                },
+                {
+                    upsert: true
+                }
             );
         }
+        else {
+            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
+            this.verifySet(collection, set);
+            this.verifyUnset(collection, unset);
+            return await this.collections[collection].updateOne(
+                query,
+                {
+                    $set: set,
+                    $unset: unset,
+                },
+            );
+        }
+    }
+
+    /**
+     * Deletes a document from the collection based on the query.
+     * @param collection - Name of the collection to delete from.
+     * @param query - Query to find the document to delete.
+     * @returns Delete result, or null on error.
+     * @throws If the query has invalid paths.
+     * */
+    async deleteOne<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        query: Record<string, any>,
+    ) {
+        this.verifyQuery(collection, query);
+        try {
+            return await this.collections[collection].deleteMany(query);
+        }
         catch (error) {
-            ZongoLog.error("updateMany failed: ", error);
+            ZongoLog.error("deleteOne failed: ", error);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
             return null;
         }
     }
 
     /**
-     * Deletes a single document from the collection based on the query.
-     * @validates Query
+     * Deletes a document from the collection based on the query.
+     * @param collection - Name of the collection to delete from.
+     * @param query - Query to find the document to delete.
+     * @returns Delete result, or null on error.
+     * @throws If the query has invalid paths.
      * */
-    async safeDeleteOne<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>
+    async deleteMany<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        query: Record<string, any>,
     ) {
         this.verifyQuery(collection, query);
-        return await this.collections[collection].deleteOne(query);
-    }
-
-    /**
-     * Deletes multiple documents from the collection based on the query.
-     * @validates Query
-     * */
-    async deleteMany<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        options?: mongoDB.DeleteOptions
-    ) {
-        this.verifyQuery(collection, query);
-        return await this.collections[collection].deleteMany(query, options);
-    }
-
-    /**
-     * Finds document(s) in the collection based on the query. Returns schema validated result.
-     * @validates Query, Result
-     * @returns null if no document is found
-     * */
-    async safeFind<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        onlyOne: boolean = false,
-        options?: mongoDB.FindOptions
-    ): Promise<
-        typeof onlyOne extends true ?
-            Array<z.infer<Schemas[K]> & { _id?: string }> :
-            (z.infer<Schemas[K]> & { _id?: string }) | null
-    > {
-        this.verifyQuery(collection, query);
-        const schema = this.schemas[collection].extend({
-            _id: z.string().optional(),
-        });
-        const func = onlyOne ?
-            this.findOne.bind(this) :
-            this.findMany.bind(this);
-        const result = await func(
-            collection,
-            query,
-            options
-        );
-        return onlyOne === true ?
-            (result as any[]).map(doc => schema.parse(doc)) :
-            result ? schema.parse(result) as any : null;
-    }
-
-    /**
-     * Finds multiple documents in the collection based on the query.
-     * @validates Query
-     * */
-    async findMany<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        options?: mongoDB.FindOptions
-    ): Promise<Array<z.infer<Schemas[K]> & { _id: string }>> {
-        this.verifyQuery(collection, query);
-        return await this.collections[collection]
-            .find(query, options)
-            .toArray() as any;
-    }
-
-    /**
-     * Finds a single document in the collection based on the query.
-     * @validates Query
-     * */
-    async findOne<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        options?: mongoDB.FindOptions
-    ): Promise<z.infer<Schemas[K] & { _id: string }> | null> {
-        this.verifyQuery(collection, query);
-        return await this.collections[collection].findOne(
-            query,
-            options
-        );
-    }
-
-    /**
-     * Finds a single document in the collection based on the query and updates it.
-     * @validates Query, Update Paths (NOT THE DATA YOU ARE ASSIGNING TO THE PATHS THOUGH)
-     * @returns null if no document is found
-     * */
-    async findOneAndUpdate<K extends keyof Schemas & string>(
-        collection: K,
-        query: Record<string, any>,
-        update: mongoDB.UpdateFilter<z.infer<Schemas[K]>>,
-        options?: mongoDB.FindOneAndUpdateOptions
-    ): Promise<z.infer<Schemas[K] & { _id: string }> | null> {
-        this.verifyQuery(collection, query);
-        for (const operationOptions of Object.values(update)) {
-            for (const path of Object.keys(operationOptions)) {
-                this.getSchemaAtPath(collection, path);
-            }
+        try {
+            return await this.collections[collection].deleteMany(query);
         }
-        return await this.collections[collection].findOneAndUpdate(
-            query,
-            update as any,
-            options ?? {}
-        );
+        catch (error) {
+            ZongoLog.error("deleteMany failed: ", error);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
+            return null;
+        }
     }
 
     /**
-     * NOT SCHEMA SAFE.
-     * Just a direct layer over the standard mongoDB aggregate
+     * Finds a document in the collection based on the query.
+     * @param collection - Name of the collection to find in.
+     * @param query - Query to find the document to return.
+     * @param options - Options for the find operation.
+     * @returns Zod verified document, true if no document, false if error.
+     * @throws If the query has invalid paths.
      * */
-    async aggregate<K extends keyof Schemas & string>(
-        collection: K,
-        pipeline: Array<mongoDB.BSON.Document>
-    ) {
-        return await this.collections[collection].aggregate(pipeline).toArray();
+    async findOne<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        query: Record<string, any>,
+        options?: mongoDB.FindOptions
+    ): Promise<z.infer<AddObjectIdToObject<Schemas[Collection]>> | boolean> {
+        this.verifyQuery(collection, query);
+        try {
+            const result = await this.collections[collection].findOne(
+                query,
+                options,
+            );
+            if (!result) {
+                ZongoLog.debug(`No document found for query: ${JSON.stringify(query)}`);
+                return true;
+            }
+            return this.getSchemaWithId(collection).parse(result);
+        }
+        catch (error) {
+            ZongoLog.error("findOne failed: ", error);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Finds documents in the collection based on the query.
+     * @param collection - Name of the collection to find in.
+     * @param query - Query to find the documents to return.
+     * @param options - Options for the find operation.
+     * @returns Zod verified documents, true if no documents, false if error.
+     * @throws If the query has invalid paths.
+     * */
+    async findMany<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        query: Record<string, any>,
+        options?: mongoDB.FindOptions
+    ): Promise<Array<z.infer<AddObjectIdToObject<Schemas[Collection]>>> | boolean> {
+        this.verifyQuery(collection, query);
+        try {
+            const cursor = this.collections[collection].find(
+                query,
+                options
+            );
+            const docArray = await cursor.toArray();
+            if (!docArray.length) {
+                ZongoLog.debug(`No documents found for query: ${JSON.stringify(query)}`);
+                return true;
+            }
+            const schemaWithId = this.getSchemaWithId(collection);
+            return docArray.map(d => schemaWithId.parse(d));
+        }
+        catch (error) {
+            ZongoLog.error("findMany failed: ", error);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
+            return false;
+        }
     }
 
     /**
      * Creates index(es) on the given path for the given collection.
-     * @validates Index paths
+     * @param collection - Name of the collection to create index on.
+     * @param indexes - Indexes to create on the collection.
+     * @param options - Options for the index creation.
+     * @returns Success boolean.
+     * @throws If any index path is invalid.
      * */
-    async safeCreateIndexes<K extends keyof Schemas & string>(
-        collection: K,
+    async createIndexes<Collection extends keyof Schemas & string>(
+        collection: Collection,
         indexes: Partial<Record<string, 1 | -1>>,
         options?: mongoDB.CreateIndexesOptions,
     ) {
+        for (const path of Object.keys(indexes)) {
+            this.getSchemaAtPath(collection, path);
+        }
         try {
-            for (const path of Object.keys(indexes)) {
-                this.getSchemaAtPath(collection, path);
-            }
             await this.collections[collection].createIndex(
                 indexes as any,
                 options
             );
-            ZongoLog.debug(`Created compound index ${JSON.stringify(indexes)} for collection ${collection}`);
+            ZongoLog.debug(`Created index for collection ${collection}`);
+            return true;
         }
-        catch(error) {
-            ZongoLog.error(`Error creating compound index ${JSON.stringify(indexes)} for collection ${collection}: ${error}`);
-            throw error;
+        catch (error) {
+            ZongoLog.error(`Error creating index for collection ${collection}: ${error}`);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
+            return false;
         }
     }
 
     /**
      * Deletes all entries in the collection that are older than the given date.
-     * @validates Timestamp path is a Date in collection schema
+     * @param collection - Name of the collection to delete from.
+     * @param timestampPath - Path to the timestamp field you'd like to evaluate in the document.
+     * @param olderThan - Date to compare against for deletion.
+     * @returns Delete result, or null on error.
+     * @throws If the timestamp path is invalid or not a Date type.
      */
-    async deleteOldDocuments<K extends keyof Schemas & string>(
-        collection: K,
+    async deleteOldDocuments<Collection extends keyof Schemas & string>(
+        collection: Collection,
         timestampPath: string,
         olderThan: Date
     ) {
@@ -424,56 +539,46 @@ export class ZongoDB<
                 throw new Error(`Values are not of Date type at path: ${timestampPath} in collection ${collection}`);
             }
         }
-        const result = await this.deleteMany(
-            collection,
-            {
-                $expr: {
-                    $lt: [
-                        {
-                            $toDate: "$timestamp"
-                        },
-                        olderThan
-                    ]
-                }
-            }
-        );
-        ZongoLog.debug(`Cleared ${result.deletedCount} old entries from collection ${collection}`);
-        return result;
-    }
-
-    /**
-     * NOT SAFE AT ALL.
-     * Performs a bulk write operation on the collection.
-     * */
-    async bulkWrite<K extends keyof Schemas & string>(
-        collection: K,
-        operations: Array<mongoDB.AnyBulkWriteOperation>,
-        options?: mongoDB.BulkWriteOptions
-    ) {
-        ZongoLog.info(`Bulk writing ${operations.length} operations to collection ${collection}`);
         try {
-            return await this.collections[collection].bulkWrite(
-                operations,
-                options
+            const result = await this.collections[collection].deleteMany(
+                {
+                    $expr: {
+                        $lt: [
+                            {
+                                $toDate: `$${timestampPath}`
+                            },
+                            olderThan
+                        ]
+                    }
+                }
             );
+            ZongoLog.debug(`Cleared ${result.deletedCount} old entries from collection ${collection}`);
+            return result;
         }
-        catch(error) {
-            ZongoLog.error(`Error bulk writing to collection ${collection}: ${error}`);
-            return false;
+        catch (error) {
+            ZongoLog.error(`Error deleting old documents in collection ${collection}: ${error}`);
+            if (error instanceof z.ZodError) {
+                ZongoLog.error("Zod error: ", error.errors);
+            }
+            return null;
         }
     }
 
     /**
      * Finds all documents in the collection that are older than the given date.
-     * @validates Timestamp path is a Date in collection schema
-     * @returns Array of documents
+     * @param collection - Name of the collection to find in.
+     * @param timestampPath - Path to the timestamp field you'd like to evaluate in the document.
+     * @param olderThan - Date to compare against for finding documents.
+     * @param findOpts - Options for the find operation.
+     * @returns Array of documents with MongoDB id.
+     * @throws If the timestamp path is invalid, schema at path is not a date type, or if the found documents aren't parsable by the collection schema.
      */
-    async safeFindOldDocuments<K extends keyof Schemas & string>(
-        collection: K,
+    async findOldDocuments<Collection extends keyof Schemas & string>(
+        collection: Collection,
         timestampPath: string,
         olderThan: Date,
         findOpts?: mongoDB.FindOptions,
-    ) {
+    ): Promise<Array<z.infer<AddObjectIdToObject<Schemas[Collection]>>>> {
         const timestampSchema = this.getSchemaAtPath(collection, timestampPath);
         if (!timestampSchema) {
             throw new Error(`Invalid timestamp path "${timestampPath}" in collection ${collection}`);
@@ -486,13 +591,12 @@ export class ZongoDB<
                 throw new Error(`Values are not of Date type at path: ${timestampPath} in collection ${collection}`);
             }
         }
-        return await this.findMany(
-            collection,
+        const cursor = this.collections[collection].find(
             {
                 $expr: {
                     $lt: [
                         {
-                            $toDate: "$timestamp"
+                            $toDate: `$${timestampPath}`
                         },
                         olderThan
                     ]
@@ -500,21 +604,36 @@ export class ZongoDB<
             },
             findOpts
         );
+        return (await cursor.toArray()).map(d => this.getSchemaWithId(collection).parse(d));
+    }
+
+    /**
+     * Used if you'd like to manually interact with the standard MongoDB library.
+     * Proceed with caution! Nothing is stopping you from breaking your schema beyond this point.
+     * */
+    getRawCollection<Collection extends keyof Schemas & string>(
+        collection: Collection
+    ): mongoDB.Collection<z.infer<Schemas[Collection]>> {
+        return this.collections[collection];
     }
 
     /**
      * Creates a backup of the collection using mongodump.
+     * @param collection - Name of the collection to backup.
+     * @param maxBackups - Maximum number of backups to keep.
+     * @param opts - Options for the backup operation.
+     * @param opts.compressed - If true, compress the backup using gzip.
      * @returns success boolean
      */
-    async backupCollection<K extends keyof Schemas & string>(
-        collection: K,
+    async backupCollection<Collection extends keyof Schemas & string>(
+        collection: Collection,
         maxBackups = 10,
         opts?: {
             compressed?: boolean;
         }
     ) {
         const backupPath = path.join(
-            this.backupPath,
+            this.backupDir,
             collection,
             new Date().toISOString().replaceAll(":", "-")
         );
@@ -559,15 +678,14 @@ export class ZongoDB<
         return await backupPromise;
     }
 
-    /**
-     * Deletes old backups from the backup directory.
-     * @returns number of deleted backups
-     */
-    private async deleteOldBackups<K extends keyof Schemas & string>(
-        collection: K,
+    private async deleteOldBackups<Collection extends keyof Schemas & string>(
+        collection: Collection,
         maxBackups: number
     ) {
-        const dir = path.join(kZongoConfig.BACKUP_DIR, collection);
+        const dir = path.join(
+            this.backupDir,
+            collection
+        );
         if (!fs.existsSync(dir)) {
             ZongoLog.error(`Backup directory does not exist: ${dir}`);
             return 0;
@@ -601,9 +719,19 @@ export class ZongoDB<
         return deletedCount;
     }
 
+    private getSchemaWithId<
+        K extends keyof Schemas & string
+    >(
+        collection: K
+    ): ZodObject<AddObjectIdToObject<z.infer<Schemas[K]>>> {
+        return this.schemas[collection].extend({
+            _id: z.instanceof(mongoDB.ObjectId),
+        }) as any;
+    }
+
     /** Throws if any of your query ain't right */
-    private verifyQuery<K extends keyof Schemas & string>(
-        collection: K,
+    private verifyQuery<Collection extends keyof Schemas & string>(
+        collection: Collection,
         query: Record<string, any>
     ) {
         for (const [path, value] of Object.entries(query)) {
@@ -615,9 +743,34 @@ export class ZongoDB<
         }
     }
 
+    private verifySet<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        set: Record<string, any>
+    ) {
+        for (const [path, value] of Object.entries(set)) {
+            const schema = this.getSchemaAtPath(collection, path);
+            if (!schema) {
+                throw new Error(`Invalid set path ${path} in collection ${collection}`);
+            }
+            schema.parse(value);
+        }
+    }
+
+    private verifyUnset<Collection extends keyof Schemas & string>(
+        collection: Collection,
+        unset: Record<string, any>
+    ) {
+        for (const path of Object.keys(unset)) {
+            const schema = this.getSchemaAtPath(collection, path);
+            if (!schema) {
+                throw new Error(`Invalid unset path ${path} in collection ${collection}`);
+            }
+        }
+    }
+
     /** Returns the schema at the given path for the given collection */
-    private getSchemaAtPath<K extends keyof Schemas & string>(
-        collection: K,
+    private getSchemaAtPath<Collection extends keyof Schemas & string>(
+        collection: Collection,
         path: string
     ): z.ZodType<any> | null {
         const keys = path.split(".");
