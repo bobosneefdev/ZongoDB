@@ -22,10 +22,11 @@ export class ZongoDB<
     readonly name: string;
     readonly schemas: Schemas;
     readonly client: mongoDB.MongoClient;
-    /** Interacting here is not reccomended unless you know what you're doing! */
+    /** You can easily break schema beyond this point if you don't know what you're doing! */
     readonly db: mongoDB.Db;
     private collections: Readonly<Record<keyof Schemas, mongoDB.Collection>>;
     private backupDir: string;
+    collectionsWithOptionalFields: Set<keyof Schemas> = new Set();
 
     constructor(
         name: string,
@@ -38,7 +39,7 @@ export class ZongoDB<
         this.name = name;
         for (const schema of Object.values(schemas)) {
             if ("_id" in schema.shape) {
-                throw new Error("Schema cannot contain _id field!");
+                throw new Error("Schema cannot contain MongoDB protected _id field!");
             }
         }
         this.schemas = schemas;
@@ -58,15 +59,13 @@ export class ZongoDB<
             },
             {} as Record<keyof Schemas, mongoDB.Collection>
         );
+        for (const [collection, schema] of Object.entries(schemas)) {
+            if (this.schemaHasOptionalFields(schema)) {
+                this.collectionsWithOptionalFields.add(collection as keyof Schemas);
+            }
+        }
         this.backupDir = path.join(kZongoConfig.BACKUP_DIR, name);
         ZongoLog.debug(`Constructed database "${name}"`);
-    }
-
-    /**
-     * @returns Array of your databases collection meta-datas.
-     */
-    async getCollectionInfos() {
-        return await this.db.listCollections().toArray() as Array<mongoDB.CollectionInfo>;
     }
 
     /**
@@ -84,9 +83,9 @@ export class ZongoDB<
         doc: z.infer<Schemas[Collection]>,
         opts?: mongoDB.InsertOneOptions
     ) {
-        const insert = ZongoUtil.removeUndefinedValues(
-            this.schemas[collection].parse(doc)
-        );
+        const insert = this.collectionsWithOptionalFields.has(collection) ?
+            ZongoUtil.removeUndefinedValues(this.schemas[collection].parse(doc)) :
+            this.schemas[collection].parse(doc);
         return await this.collections[collection].insertOne(
             insert,
             opts
@@ -100,9 +99,9 @@ export class ZongoDB<
         docs: Array<z.infer<Schemas[Collection]>>,
         opts?: mongoDB.InsertOneOptions
     ) {
-        const inserts = docs.map(doc => ZongoUtil.removeUndefinedValues(
-            this.schemas[collection].parse(doc)
-        ));
+        const inserts = this.collectionsWithOptionalFields.has(collection) ?
+            docs.map(doc => ZongoUtil.removeUndefinedValues(this.schemas[collection].parse(doc))) :
+            docs.map(doc => this.schemas[collection].parse(doc));
         return await this.collections[collection].insertMany(
             inserts,
             opts
@@ -134,19 +133,18 @@ export class ZongoDB<
         if (!document) {
             return true;
         }
-        const previous = this.schemas[collection].parse(document);
-        const updated = await this.transformAndUpdateDoc(
+        const result = await this.transformAndUpdateDoc(
             collection,
             query,
             document,
             update
         );
-        if (!updated) {
+        if (!result) {
             return false;
         }
         return {
-            previous: previous,
-            updated: updated
+            previous: result.previous,
+            updated: result.updated,
         };
     }
 
@@ -193,21 +191,17 @@ export class ZongoDB<
         }> = [];
         let errors: number = 0;
         for (const document of documents) {
-            const previous = this.schemas[collection].parse(document);
-            const updated = await this.transformAndUpdateDoc(
+            const result = await this.transformAndUpdateDoc(
                 collection,
                 query,
                 document,
                 update
             );
-            if (!updated) {
+            if (!result) {
                 errors++;
             }
             else if (detailed === true) {
-                success.push({
-                    previous: previous,
-                    updated: updated,
-                });
+                success.push(result);
             }
             else {
                 success.push(true);
@@ -226,13 +220,15 @@ export class ZongoDB<
     >(
         collection: Collection,
         query: Record<string, any>,
-        document: mongoDB.WithId<mongoDB.BSON.Document>,
+        document: mongoDB.OptionalId<mongoDB.BSON.Document>,
         update: Update
-    ): Promise<AddObjectIdToObject<z.infer<Schemas[Collection]>> | null> {
+    ) {
         const docId = document._id;
         if (!docId) {
-            throw new Error("Document doesn't have ID! Can't transform! SHOULDN'T HAPPEN!");
+            throw new Error("Document doesn't have ID and can't be transformed! This shouldn't happen!");
         }
+        delete document._id; // remove so we don't warn about immutable _id field
+        const parsed = this.schemas[collection].parse(document);
         for (const { path, transform } of update) {
             if (!path) {
                 document = transform(document);
@@ -245,24 +241,25 @@ export class ZongoDB<
                 );
             }
         }
-        const { set, unset } = ZongoUtil.separateSetAndUnset(
-            this.schemas[collection].parse(document) // this will throw if the user has screwed up
-        );
         const result = await this.collections[collection].updateOne(
             {
                 "_id": docId,
                 ...query,
             },
-            {
-                "$set": set,
-                "$unset": unset,
-            },
+            this.schemaHasOptionalFields(this.schemas[collection]) ?
+                ZongoUtil.getSetAndUnsetPaths(document) :
+                {
+                    $set: document,
+                }
         );
         if (!result?.acknowledged) {
             ZongoLog.error(`Error updating document in collection "${collection}"`, result);
             return null;
         }
-        return document;
+        return {
+            updated: document,
+            previous: parsed,
+        } 
     }
 
     /**
@@ -288,28 +285,34 @@ export class ZongoDB<
             if (!parsed.success) {
                 throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
             }
-            const {set, unset} = ZongoUtil.separateSetAndUnset(update);
             return await this.collections[collection].updateOne(
                 query,
-                {
-                    $set: set,
-                    $unset: unset,
-                },
+                this.collectionsWithOptionalFields.has(collection) ?
+                    ZongoUtil.getSetAndUnsetPaths(parsed.data) :
+                    {
+                        $set: parsed.data,
+                    },
                 {
                     upsert: true
                 }
             );
         }
         else {
-            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
-            this.verifySet(collection, set);
-            this.verifyUnset(collection, unset);
             return await this.collections[collection].updateOne(
                 query,
-                {
-                    $set: set,
-                    $unset: unset,
-                },
+                this.collectionsWithOptionalFields.has(collection) ?
+                    (() => {
+                        const { $set, $unset } = ZongoUtil.getSetAndUnsetPaths(update);
+                        this.verifySet(collection, $set);
+                        this.verifyUnset(collection, $unset);
+                        return {
+                            $set,
+                            $unset,
+                        }
+                    })() :
+                    {
+                        $set: update,
+                    }
             );
         }
     }
@@ -337,28 +340,34 @@ export class ZongoDB<
             if (!parsed.success) {
                 throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
             }
-            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
-            return await this.collections[collection].updateOne(
+            return await this.collections[collection].updateMany(
                 query,
-                {
-                    $set: set,
-                    $unset: unset,
-                },
+                this.collectionsWithOptionalFields.has(collection) ?
+                    ZongoUtil.getSetAndUnsetPaths(parsed.data) :
+                    {
+                        $set: parsed.data,
+                    },
                 {
                     upsert: true
                 }
             );
         }
         else {
-            const { set, unset } = ZongoUtil.separateSetAndUnset(update);
-            this.verifySet(collection, set);
-            this.verifyUnset(collection, unset);
-            return await this.collections[collection].updateOne(
+            return await this.collections[collection].updateMany(
                 query,
-                {
-                    $set: set,
-                    $unset: unset,
-                },
+                this.collectionsWithOptionalFields.has(collection) ?
+                    (() => {
+                        const { $set, $unset } = ZongoUtil.getSetAndUnsetPaths(update);
+                        this.verifySet(collection, $set);
+                        this.verifyUnset(collection, $unset);
+                        return {
+                            $set,
+                            $unset,
+                        }
+                    })() :
+                    {
+                        $set: update,
+                    }
             );
         }
     }
@@ -677,6 +686,26 @@ export class ZongoDB<
 
         return await backupPromise;
     }
+
+    private schemaHasOptionalFields(schema: z.ZodObject<any>): boolean {
+        for (const value of Object.values(schema.shape)) {
+            if (
+                value instanceof z.ZodOptional ||
+                (
+                    value instanceof z.ZodObject &&
+                    this.schemaHasOptionalFields(value)
+                ) ||
+                (
+                    value instanceof z.ZodArray &&
+                    value.element instanceof z.ZodObject &&
+                    this.schemaHasOptionalFields(value.element)
+                )
+            ) {
+                return true;
+            }
+        }
+        return false;
+      }
 
     private async deleteOldBackups<Collection extends keyof Schemas & string>(
         collection: Collection,

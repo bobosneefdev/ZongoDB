@@ -1,58 +1,71 @@
 import { z } from "zod";
 import { ZongoDB } from "../src/database";
 
+enum State {
+    CA = "CA",
+    NY = "NY",
+    TX = "TX",
+}
+
+enum CarMake {
+    HONDA = "Honda",
+    TOYOTA = "Toyota",
+    FORD = "Ford",
+    VOLKSWAGEN = "Volkswagen",
+}
+
+const testDatabase = new ZongoDB(
+    "ZongoTest",
+    {
+        bung: z.object({
+            string: z.string(),
+            number: z.number(),
+            boolean: z.boolean(),
+        }),
+        people: z.object({
+            created_at: z.date(),
+            name: z.string(),
+            property: z.object({
+                cars: z.array(z.object({
+                    state_registered: z.nativeEnum(State),
+                    license_plate: z.string(),
+                    make: z.nativeEnum(CarMake),
+                    model: z.string(),
+                    year: z.number()
+                        .int()
+                })).optional(),
+                homes: z.array(z.object({
+                    address_1: z.string(),
+                    address_2: z.string()
+                        .nullable(),
+                    city: z.string(),
+                    state: z.nativeEnum(State),
+                    zip: z.number()
+                        .int()
+                        .min(10000)
+                        .max(99999)
+                })).optional(),
+            })
+        }),
+    }
+);
+
 describe(
     "Database",
     () => {
-        enum State {
-            CA = "CA",
-            NY = "NY",
-            TX = "TX",
-        }
-
-        enum CarMake {
-            HONDA = "Honda",
-            TOYOTA = "Toyota",
-            FORD = "Ford",
-            VOLKSWAGEN = "Volkswagen",
-        }
-
-        const database = new ZongoDB(
-            "ZongoTest",
-            {
-                people: z.object({
-                    created_at: z.date(),
-                    name: z.string(),
-                    property: z.object({
-                        cars: z.array(z.object({
-                            state_registered: z.nativeEnum(State),
-                            license_plate: z.string(),
-                            make: z.nativeEnum(CarMake),
-                            model: z.string(),
-                            year: z.number()
-                                .int()
-                        })).optional(),
-                        homes: z.array(z.object({
-                            address_1: z.string(),
-                            address_2: z.string()
-                                .nullable(),
-                            city: z.string(),
-                            state: z.nativeEnum(State),
-                            zip: z.number()
-                                .int()
-                                .min(10000)
-                                .max(99999)
-                        })).optional(),
-                    })
-                })
+        it(
+            "Verify that only one of our schemas has optional fields set",
+            () => {
+                expect(testDatabase.collectionsWithOptionalFields.size).toBe(1);
             }
-        );
+        )
 
+        // Used as the key for this test suites document
         const date = new Date();
 
         beforeAll(
             async () => {
-                const indexesCreated = await database.createIndexes(
+                const indexesCreated = await testDatabase.createIndexes(
                     "people",
                     {
                         "created_at": 1,
@@ -62,23 +75,13 @@ describe(
             }
         )
 
+        // TESTS THAT MUST BE RUN IN ORDER
+        let insertOneResolve: (v?: any) => void;
+        const insertOnePromise = new Promise(resolve => insertOneResolve = resolve);
         it(
-            "Get all collection names.",
+            "insertOne",
             async () => {
-                const collections = await database.getCollectionInfos();
-                const expectedCollections = new Set(collections.map(c => c.name));
-                for (const collection of Object.keys(database.schemas)) {
-                    expect(expectedCollections.has(collection)).toBe(true);
-                }
-            }
-        )
-
-        let insertResolve: (v?: any) => void;
-        const insertPromise = new Promise(resolve => insertResolve = resolve);
-        it(
-            "Insert John Doe into the database, he only has a car.",
-            async () => {
-                const result = await database.insertOne(
+                const result = await testDatabase.insertOne(
                     "people",
                     {
                         created_at: date,
@@ -95,17 +98,17 @@ describe(
                     },
                 );
                 expect(result?.insertedId).toBeDefined();
-                insertResolve();
+                insertOneResolve();
             }
         );
 
-        let newCarResolve: (v?: any) => void;
-        const newCarPromise = new Promise(resolve => newCarResolve = resolve);
+        let transformManyResolve: (v?: any) => void;
+        const transformManyPromise = new Promise(resolve => transformManyResolve = resolve);
         it(
-            "John Doe got a new car, add that to the DB.",
+            "transformMany",
             async () => {
-                await insertPromise;
-                const result = await database.transformOne(
+                await insertOnePromise;
+                const result = await testDatabase.transformMany(
                     "people",
                     {
                         "created_at": date,
@@ -113,7 +116,7 @@ describe(
                     [
                         {
                             path: "property.cars",
-                            transform: (d: NonNullable<z.infer<typeof database.schemas.people>["property"]["cars"]>) => {
+                            transform: (d) => {
                                 d.push({
                                     state_registered: State.CA,
                                     license_plate: "8RJK860",
@@ -124,26 +127,26 @@ describe(
                                 return d;
                             }
                         },
-                    ]
+                    ],
+                    true
                 );
                 if (typeof result === "boolean") {
                     expect(typeof result).toBe("object");
                 }
                 else {
-                    expect(result.previous).toBeDefined();
-                    expect(result.updated).toBeDefined();
+                    expect(result.success.length).toBeGreaterThan(0);
                 }
-                newCarResolve();
+                transformManyResolve();
             }
         );
 
-        let findNewCarResolve: (v?: any) => void;
-        const findNewCarPromise = new Promise(resolve => findNewCarResolve = resolve);
+        let findOneResolve: (v?: any) => void;
+        const findOnePromise = new Promise(resolve => findOneResolve = resolve);
         it(
-            "Find John Doe's new car in the database.",
+            "findOne",
             async () => {
-                await newCarPromise;
-                const result = await database.findOne(
+                await transformManyPromise;
+                const result = await testDatabase.findOne(
                     "people",
                     {
                         created_at: date,
@@ -156,17 +159,17 @@ describe(
                 else {
                     expect(typeof result).toBe("object");
                 }
-                findNewCarResolve();
+                findOneResolve();
             }
         );
 
-        let newHouseResolve: (v?: any) => void;
-        const newHousePromise = new Promise(resolve => newHouseResolve = resolve);
+        let updateManyResolve: (v?: any) => void;
+        const updateManyPromise = new Promise(resolve => updateManyResolve = resolve);
         it(
-            "John Doe got a new house, but he had to sell both of his cars for the down payment.",
+            "updateMany",
             async () => {
-                await findNewCarPromise;
-                const result = await database.updateOne(
+                await findOnePromise;
+                const result = await testDatabase.updateMany(
                     "people",
                     {
                         created_at: date,
@@ -183,44 +186,45 @@ describe(
                     }
                 );
                 expect(result.modifiedCount).toBe(1);
-                newHouseResolve();
+                updateManyResolve();
             }
         );
 
-        let houseVerifyResolve: (v?: any) => void;
-        const houseVerifyPromise = new Promise(resolve => houseVerifyResolve = resolve);
+        let findManyResolve: (v?: any) => void;
+        const findManyPromise = new Promise(resolve => findManyResolve = resolve);
         it(
-            "Verify that he actually got his new house and lost his cars.",
+            "findMany with query",
             async () => {
-                await newHousePromise;
-                const result = await database.findOne(
+                await updateManyPromise;
+                const result = await testDatabase.findMany(
                     "people",
                     {
                         created_at: date,
                     },
                 );
-                expect(typeof result).toBe("object");
+                expect(Array.isArray(result)).toBe(true);
                 if (typeof result !== "boolean") {
-                    expect(result.property.cars).toBe(undefined);
-                    expect(result.property.homes?.length).toBe(1);
+                    expect(result[0].property.cars).toBe(undefined);
+                    expect(result[0].property.homes?.length).toBe(1);
                 }
-                houseVerifyResolve();
+                findManyResolve();
             }
         );
 
-        // it(
-        //     "Find one or more John Does in the database with a blank query.",
-        //     async () => {
-        //         await houseVerifyPromise;
-        //         const result = await database.findMany(
-        //             "people",
-        //             {},
-        //         );
-        //         expect(Array.isArray(result)).toBe(true);
-        //         if (typeof result !== "boolean") {
-        //             expect(result.length).toBeGreaterThan(0);
-        //         }
-        //     }
-        // );
+        // TESTS THAT JUST REQUIRE A DOCUMENT TO BE PRESENT
+        it(
+            "findMany with blank query",
+            async () => {
+                await insertOnePromise;
+                const result = await testDatabase.findMany(
+                    "people",
+                    {},
+                );
+                expect(Array.isArray(result)).toBe(true);
+                if (typeof result !== "boolean") {
+                    expect(result.length).toBeGreaterThan(0);
+                }
+            }
+        );
     }
 )

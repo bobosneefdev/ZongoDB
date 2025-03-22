@@ -31,11 +31,11 @@ export class ZongoUtil {
         if (
             obj === null ||
             typeof obj !== 'object' ||
-            Array.isArray(obj)
+            Array.isArray(obj) ||
+            obj instanceof Date
         ) {
             return obj;
         }
-        
         const result = {} as T;
         for (const [key, value] of Object.entries(obj)) {
             if (value !== undefined) {
@@ -49,10 +49,9 @@ export class ZongoUtil {
         return result;
     }
 
-    static separateSetAndUnset<T>(obj: T) {
-        const set: Record<string, any> = {};
-        const unset: Record<string, any> = {};
-
+    static getSetAndUnsetPaths<T>(obj: T) {
+        const $set: Record<string, any> = {};
+        const $unset: Record<string, any> = {};
         if (
             obj === null ||
             typeof obj !== "object" ||
@@ -67,35 +66,35 @@ export class ZongoUtil {
                 continue;
             }
             else if (value === undefined) {
-                unset[key] = "";
+                $unset[key] = "";
             } else if (
                 value !== null &&
                 typeof value === "object" &&
                 !Array.isArray(value) && 
                 Object.keys(value).length > 0
             ) {
-                const nestedResult = this.separateSetAndUnset(value);
+                const nestedResult = this.getSetAndUnsetPaths(value);
                 if (
-                    Object.keys(nestedResult.set).length > 0 ||
-                    Object.keys(nestedResult.unset).length > 0
+                    Object.keys(nestedResult.$set).length > 0 ||
+                    Object.keys(nestedResult.$unset).length > 0
                 ) {
-                    for (const nestedKey in nestedResult.set) {
-                        set[`${key}.${nestedKey}`] = nestedResult.set[nestedKey];
+                    for (const nestedKey in nestedResult.$set) {
+                        $set[`${key}.${nestedKey}`] = nestedResult.$set[nestedKey];
                     }
-                    for (const nestedKey in nestedResult.unset) {
-                        unset[`${key}.${nestedKey}`] = 1;
+                    for (const nestedKey in nestedResult.$unset) {
+                        $unset[`${key}.${nestedKey}`] = 1;
                     }
                 } else {
-                    set[key] = value;
+                    $set[key] = value;
                 }
             } else {
-                set[key] = value;
+                $set[key] = value;
             }
         }
         
         return {
-            set,
-            unset
+            $set,
+            $unset
         };
     }
 }
