@@ -768,6 +768,9 @@ export class ZongoDB<
             if (!schema) {
                 throw new Error(`Invalid query path ${path} in collection ${collection}`);
             }
+            else if (typeof value === "object") {
+                continue;
+            }
             schema.parse(value);
         }
     }
