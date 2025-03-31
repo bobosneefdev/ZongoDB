@@ -5,26 +5,22 @@ export class ZongoUtil {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    static updateValueInObject(
+    static getValueAtPath(
         obj: any,
         path: string,
-        func: (value: any) => any
     ) {
         let current = obj;
-
         const keys = path.split(".");
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            if (!(key in current)) {
-                throw new Error(`Key ${key} (Path: ${keys.join(" > ")}) does not exist in object!`);
+        for (const key of keys) {
+            if (
+                typeof current !== "object" ||
+                !(key in current)
+            ) {
+                throw new Error(`Value at path: "${keys.join(" > ")}" does not exist in object!`);
             }
-            if (i === keys.length - 1) {
-                current[key] = func(current[key]);
-            }
-            else {
-                current = current[key];
-            }
+            current = current[key];
         }
+        return current;
     }
 
     static removeUndefinedValues<T>(obj: T): T {
@@ -51,7 +47,7 @@ export class ZongoUtil {
 
     static getSetAndUnsetPaths<T>(obj: T) {
         const $set: Record<string, any> = {};
-        const $unset: Record<string, any> = {};
+        const $unset: Record<string, string> = {};
         if (
             obj === null ||
             typeof obj !== "object" ||
@@ -82,7 +78,7 @@ export class ZongoUtil {
                         $set[`${key}.${nestedKey}`] = nestedResult.$set[nestedKey];
                     }
                     for (const nestedKey in nestedResult.$unset) {
-                        $unset[`${key}.${nestedKey}`] = 1;
+                        $unset[`${key}.${nestedKey}`] = "";
                     }
                 } else {
                     $set[key] = value;

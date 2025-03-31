@@ -7,10 +7,10 @@ import { ZongoLog } from './logger';
 import { kZongoConfig } from './config';
 import { ZongoUtil } from './util';
 
-export type ZongoTransformUpdate = {
-    path: string | null;
+export type ZongoTransformUpdate = Array<{
+    path: string;
     transform: (value: any) => any;
-};
+}>;
 
 type AddObjectIdToObject<T extends Object> = T & {
     _id: mongoDB.ObjectId;
@@ -24,8 +24,10 @@ export class ZongoDB<
     readonly client: mongoDB.MongoClient;
     /** You can easily break schema beyond this point if you don't know what you're doing! */
     readonly db: mongoDB.Db;
+    private flattenedSchemas: Readonly<Record<keyof Schemas, Record<string, z.ZodType<any>>>>;
     private collections: Readonly<Record<keyof Schemas, mongoDB.Collection>>;
     private backupDir: string;
+    private warningMessagesSent: Record<string, number> = {};
     collectionsWithOptionalFields: Set<keyof Schemas> = new Set();
 
     constructor(
@@ -43,6 +45,7 @@ export class ZongoDB<
             }
         }
         this.schemas = schemas;
+        this.flattenedSchemas = this.getPathedSchemas(schemas);
         this.client = new mongoDB.MongoClient(
             kZongoConfig.MONGO_URI,
             {
@@ -117,7 +120,7 @@ export class ZongoDB<
      */
     async transformOne<
         Collection extends keyof Schemas & string,
-        Update extends Array<ZongoTransformUpdate>
+        Update extends ZongoTransformUpdate
     >(
         collection: Collection,
         query: Record<string, any>,
@@ -135,7 +138,6 @@ export class ZongoDB<
         }
         const result = await this.transformAndUpdateDoc(
             collection,
-            query,
             document,
             update
         );
@@ -158,7 +160,7 @@ export class ZongoDB<
      */
     async transformMany<
         Collection extends keyof Schemas & string,
-        Update extends Array<ZongoTransformUpdate>,
+        Update extends ZongoTransformUpdate,
         Detailed extends boolean
     >(
         collection: Collection,
@@ -193,7 +195,6 @@ export class ZongoDB<
         for (const document of documents) {
             const result = await this.transformAndUpdateDoc(
                 collection,
-                query,
                 document,
                 update
             );
@@ -216,10 +217,9 @@ export class ZongoDB<
     /** returns null on error */
     private async transformAndUpdateDoc<
         Collection extends keyof Schemas & string,
-        Update extends Array<ZongoTransformUpdate>
+        Update extends ZongoTransformUpdate
     >(
         collection: Collection,
-        query: Record<string, any>,
         document: mongoDB.OptionalId<mongoDB.BSON.Document>,
         update: Update
     ) {
@@ -227,38 +227,39 @@ export class ZongoDB<
         if (!docId) {
             throw new Error("Document doesn't have ID and can't be transformed! This shouldn't happen!");
         }
-        delete document._id; // remove so we don't warn about immutable _id field
-        const parsed = this.schemas[collection].parse(document);
+        delete document._id; // so it'll parse
+        const previous = this.schemas[collection].parse(document);
+        const updt: Record<
+            "$set" | "$unset",
+            Record<string, any>
+        > = {
+            "$set": {},
+            "$unset": {},
+        };
         for (const { path, transform } of update) {
-            if (!path) {
-                document = transform(document);
+            const newVal = transform(ZongoUtil.getValueAtPath(document, path));
+            if (newVal === undefined) {
+                updt.$unset[path] = "";
             }
             else {
-                ZongoUtil.updateValueInObject(
-                    document,
-                    path,
-                    transform
-                );
+                updt.$set[path] = newVal;
             }
         }
+        this.verifySet(collection, updt.$set); // these will throw if bad
+        this.verifyUnset(collection, updt.$unset); // ^^^
         const result = await this.collections[collection].updateOne(
             {
                 "_id": docId,
-                ...query,
             },
-            this.schemaHasOptionalFields(this.schemas[collection]) ?
-                ZongoUtil.getSetAndUnsetPaths(document) :
-                {
-                    $set: document,
-                }
+            updt,
         );
-        if (!result?.acknowledged) {
+        if (!result.modifiedCount) {
             ZongoLog.error(`Error updating document in collection "${collection}"`, result);
             return null;
         }
         return {
-            updated: document,
-            previous: parsed,
+            updated: updt,
+            previous: previous,
         } 
     }
 
@@ -504,7 +505,7 @@ export class ZongoDB<
         options?: mongoDB.CreateIndexesOptions,
     ) {
         for (const path of Object.keys(indexes)) {
-            this.getSchemaAtPath(collection, path);
+            
         }
         try {
             await this.collections[collection].createIndex(
@@ -536,7 +537,7 @@ export class ZongoDB<
         timestampPath: string,
         olderThan: Date
     ) {
-        const timestampSchema = this.getSchemaAtPath(collection, timestampPath);
+        const timestampSchema = this.flattenedSchemas[collection][timestampPath];
         if (!timestampSchema) {
             throw new Error(`Invalid timestamp path "${timestampPath}" in collection ${collection}`);
         }
@@ -588,7 +589,7 @@ export class ZongoDB<
         olderThan: Date,
         findOpts?: mongoDB.FindOptions,
     ): Promise<Array<z.infer<AddObjectIdToObject<Schemas[Collection]>>>> {
-        const timestampSchema = this.getSchemaAtPath(collection, timestampPath);
+        const timestampSchema = this.flattenedSchemas[collection][timestampPath];
         if (!timestampSchema) {
             throw new Error(`Invalid timestamp path "${timestampPath}" in collection ${collection}`);
         }
@@ -763,15 +764,15 @@ export class ZongoDB<
         collection: Collection,
         query: Record<string, any>
     ) {
-        for (const [path, value] of Object.entries(query)) {
-            const schema = this.getSchemaAtPath(collection, path);
+        for (const path of Object.keys(query)) {
+            const schema = this.flattenedSchemas[collection][path];
             if (!schema) {
                 throw new Error(`Invalid query path ${path} in collection ${collection}`);
             }
-            else if (typeof value === "object") {
-                continue;
+            if (!this.warningMessagesSent["queryUnsafeThisVersion"]) {
+                ZongoLog.warn(`This version of ZongoDB does not parse query values, it only ensures the paths exist in the schema. Beware.`);
+                this.warningMessagesSent["queryUnsafeThisVersion"] = 1;
             }
-            schema.parse(value);
         }
     }
 
@@ -780,7 +781,7 @@ export class ZongoDB<
         set: Record<string, any>
     ) {
         for (const [path, value] of Object.entries(set)) {
-            const schema = this.getSchemaAtPath(collection, path);
+            const schema = this.flattenedSchemas[collection][path];
             if (!schema) {
                 throw new Error(`Invalid set path ${path} in collection ${collection}`);
             }
@@ -793,36 +794,44 @@ export class ZongoDB<
         unset: Record<string, any>
     ) {
         for (const path of Object.keys(unset)) {
-            const schema = this.getSchemaAtPath(collection, path);
+            const schema = this.flattenedSchemas[collection][path];
             if (!schema) {
                 throw new Error(`Invalid unset path ${path} in collection ${collection}`);
             }
+            schema.parse(undefined);
         }
     }
 
-    /** Returns the schema at the given path for the given collection */
-    private getSchemaAtPath<Collection extends keyof Schemas & string>(
-        collection: Collection,
-        path: string
-    ): z.ZodType<any> | null {
-        const keys = path.split(".");
-        let current = this.schemas[collection];
-        for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            if (
-                keys.length === 1 &&
-                key === "_id"
-            ) {
-                return null;
+    // Recursively get all the schemas in a flattened format for path validation.
+    private getPathedSchemas(schemas: Schemas): Record<keyof Schemas, Record<string, z.ZodType<any>>> {
+        const result: Record<string, Record<string, z.ZodType<any>>> = {};
+        const traverser = (
+            obj: any,
+            path: string,
+            collection: string
+        ) => {
+            if (obj instanceof z.ZodObject) {
+                for (const key in obj.shape) {
+                    traverser(
+                        obj.shape[key],
+                        path ? `${path}.${key}` : key,
+                        collection
+                    );
+                }
+            } else {
+                if (!result[collection]) {
+                    result[collection] = {};
+                }
+                result[collection][path] = obj;
             }
-            else if (current.shape?.[key] === undefined) {
-                throw new Error(`Invalid index path [${keys.join(" > ")}]`);
-            }
-            else if (i === keys.length - 1) {
-                return current.shape[key];
-            }
-            current = current.shape[key];
+        };
+        for (const [collection, schema] of Object.entries(schemas)) {
+            traverser(
+                schema,
+                "",
+                collection
+            );
         }
-        return current;
+        return result as any;
     }
-};
+}
