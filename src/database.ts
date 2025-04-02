@@ -250,7 +250,7 @@ export class ZongoDB<
             },
             updt,
         );
-        if (!result.modifiedCount) {
+        if (!result.acknowledged) {
             ZongoLog.error(`Error updating document in collection "${collection}"`, result);
             return null;
         }
