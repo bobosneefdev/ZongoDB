@@ -818,12 +818,11 @@ export class ZongoDB<
                         collection
                     );
                 }
-            } else {
-                if (!result[collection]) {
-                    result[collection] = {};
-                }
-                result[collection][path] = obj;
             }
+            if (!result[collection]) {
+                result[collection] = {};
+            }
+            result[collection][path] = obj;
         };
         for (const [collection, schema] of Object.entries(schemas)) {
             traverser(

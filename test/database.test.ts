@@ -21,6 +21,7 @@ const testDatabase = new ZongoDB(
             string: z.string(),
             number: z.number(),
             boolean: z.boolean(),
+            strArr: z.array(z.string())
         }),
         people: z.object({
             created_at: z.date(),
