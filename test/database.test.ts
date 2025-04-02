@@ -17,12 +17,6 @@ enum CarMake {
 const testDatabase = new ZongoDB(
     "ZongoTest",
     {
-        bung: z.object({
-            string: z.string(),
-            number: z.number(),
-            boolean: z.boolean(),
-            strArr: z.array(z.string())
-        }),
         people: z.object({
             created_at: z.date(),
             name: z.string(),
@@ -114,30 +108,63 @@ describe(
                     {
                         "created_at": date,
                     },
-                    [
-                        {
-                            path: "property.cars",
-                            transform: (d) => {
-                                d.push({
-                                    state_registered: State.CA,
-                                    license_plate: "8RJK860",
-                                    make: CarMake.TOYOTA,
-                                    model: "Land Cruiser",
-                                    year: 2025
-                                });
-                                return d;
-                            }
+                    {
+                        "property.cars": (d) => {
+                            d.push({
+                                state_registered: State.CA,
+                                license_plate: "8RJK860",
+                                make: CarMake.TOYOTA,
+                                model: "Land Cruiser",
+                                year: 2025
+                            });
+                            return d;
                         },
-                    ],
-                    true
+                    },
+                    {
+                        detailed: true
+                    }
                 );
                 if (typeof result === "boolean") {
                     expect(typeof result).toBe("object");
                 }
                 else {
-                    expect(result.success.length).toBeGreaterThan(0);
+                    expect(result.successes.length).toBeGreaterThan(0);
                 }
                 transformManyResolve();
+            }
+        );
+
+        let transformOneResolve: (v?: any) => void;
+        const transformOnePromise = new Promise(resolve => transformOneResolve = resolve);
+        it(
+            "transformOne",
+            async () => {
+                await transformManyPromise;
+                const result = await testDatabase.transformOne(
+                    "people",
+                    {
+                        "created_at": date,
+                    },
+                    {
+                        "property.cars": (d) => {
+                            d.push({
+                                state_registered: State.CA,
+                                license_plate: "3EBK823",
+                                make: CarMake.HONDA,
+                                model: "Accord CrossTour",
+                                year: 2014
+                            });
+                            return d;
+                        }
+                    }
+                );
+                if (typeof result === "boolean") {
+                    expect(typeof result).toBe("object");
+                }
+                else {
+                    expect(result.updated).toBeDefined();
+                }
+                transformOneResolve();
             }
         );
 
@@ -146,7 +173,7 @@ describe(
         it(
             "findOne",
             async () => {
-                await transformManyPromise;
+                await transformOnePromise;
                 const result = await testDatabase.findOne(
                     "people",
                     {
@@ -154,8 +181,9 @@ describe(
                     },
                 );
                 if (typeof result === "object") {
-                    expect(result.property.cars?.length).toBe(2);
+                    expect(result.property.cars?.length).toBe(3);
                     expect(result.property.cars?.some(car => car.model === "Land Cruiser")).toBe(true);
+                    expect(result.property.cars?.some(car => car.model === "Accord CrossTour")).toBe(true);
                 }
                 else {
                     expect(typeof result).toBe("object");

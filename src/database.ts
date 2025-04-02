@@ -7,10 +7,7 @@ import { ZongoLog } from './logger';
 import { kZongoConfig } from './config';
 import { ZongoUtil } from './util';
 
-export type ZongoTransformUpdate = Array<{
-    path: string;
-    transform: (value: any) => any;
-}>;
+export type ZongoTransformUpdate = Record<string, (value: any) => any>;
 
 type AddObjectIdToObject<T extends Object> = T & {
     _id: mongoDB.ObjectId;
@@ -24,7 +21,7 @@ export class ZongoDB<
     readonly client: mongoDB.MongoClient;
     /** You can easily break schema beyond this point if you don't know what you're doing! */
     readonly db: mongoDB.Db;
-    private flattenedSchemas: Readonly<Record<keyof Schemas, Record<string, z.ZodType<any>>>>;
+    readonly flattenedSchemas: Readonly<Record<keyof Schemas, Readonly<Record<string, z.ZodType<any>>>>>;
     private collections: Readonly<Record<keyof Schemas, mongoDB.Collection>>;
     private backupDir: string;
     private warningMessagesSent: Record<string, number> = {};
@@ -128,7 +125,7 @@ export class ZongoDB<
     ): Promise<
         {
             previous: z.infer<Schemas[Collection]>;
-            updated: z.infer<Schemas[Collection]>;
+            updated: Record<"$set" | "$unset", Record<string, any>>;
         } | boolean
     > {
         this.verifyQuery(collection, query);
@@ -155,24 +152,26 @@ export class ZongoDB<
      * @param collection - Name of the collection to insert to.
      * @param query - Path/values to match the document to.
      * @param update - Transformations to apply to given paths.
-     * @param detailed - Determines whether you get the full array of changed datas, which could be massive. If false you get number of changed docs.
+     * @param opts - Determines whether you get the full array of changed datas, which could be massive. If false you get number of changed docs.
      * @returns Previous/Updated datas on success, true if no docs found, false if issue.
      */
     async transformMany<
         Collection extends keyof Schemas & string,
         Update extends ZongoTransformUpdate,
-        Detailed extends boolean
+        TransformManyOpts extends {
+            detailed?: boolean;
+        }
     >(
         collection: Collection,
         query: Record<string, any>,
         update: Update,
-        detailed: Detailed,
+        opts?: TransformManyOpts,
     ): Promise<
         (
-            Detailed extends true ? {
-                success: Array<{
+            TransformManyOpts["detailed"] extends true ? {
+                successes: Array<{
                     previous: z.infer<Schemas[Collection]>;
-                    updated: z.infer<Schemas[Collection]>;
+                    updated: Record<"$set" | "$unset", Record<string, any>>;
                 }>
                 errors: number,
             } : {
@@ -187,11 +186,9 @@ export class ZongoDB<
         if (!documents.length) {
             return true;
         }
-        const success: Array<true | {
-            previous: z.infer<Schemas[Collection]>;
-            updated: z.infer<Schemas[Collection]>;
-        }> = [];
-        let errors: number = 0;
+        const detailedSuccesses = [];
+        let basicSuccesses = 0;
+        let errors = 0;
         for (const document of documents) {
             const result = await this.transformAndUpdateDoc(
                 collection,
@@ -201,15 +198,15 @@ export class ZongoDB<
             if (!result) {
                 errors++;
             }
-            else if (detailed === true) {
-                success.push(result);
+            else if (opts?.detailed === true) {
+                detailedSuccesses.push(result);
             }
             else {
-                success.push(true);
+                basicSuccesses++;
             }
         }
         return {
-            success: detailed === true ? success : success.length,
+            successes: opts?.detailed === true ? detailedSuccesses : basicSuccesses,
             errors: errors,
         } as any;
     }
@@ -236,7 +233,7 @@ export class ZongoDB<
             "$set": {},
             "$unset": {},
         };
-        for (const { path, transform } of update) {
+        for (const [path, transform] of Object.entries(update)) {
             const newVal = transform(ZongoUtil.getValueAtPath(document, path));
             if (newVal === undefined) {
                 updt.$unset[path] = "";
@@ -822,7 +819,9 @@ export class ZongoDB<
             if (!result[collection]) {
                 result[collection] = {};
             }
-            result[collection][path] = obj;
+            if (path !== "") {
+                result[collection][path] = obj;
+            }
         };
         for (const [collection, schema] of Object.entries(schemas)) {
             traverser(
