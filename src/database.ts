@@ -812,14 +812,14 @@ export class ZongoDB<
             if (path !== "") {
                 result[collection][path] = schema;
             }
-            if (schema instanceof z.ZodObject) { 
+            if (schema && typeof schema === "object" && "shape" in schema) {
                 for (const key in schema.shape) { 
                     traverser( 
                         schema.shape[key], 
                         path ? `${path}.${key}` : key, 
                         collection 
                     ); 
-                } 
+                }
             }
         };
         for (const [collection, schema] of Object.entries(schemas)) { 
