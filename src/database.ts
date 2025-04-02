@@ -42,7 +42,7 @@ export class ZongoDB<
             }
         }
         this.schemas = schemas;
-        this.flattenedSchemas = this.getPathedSchemas(schemas);
+        this.flattenedSchemas = this.getFlattenedSchemas(schemas);
         this.client = new mongoDB.MongoClient(
             kZongoConfig.MONGO_URI,
             {
@@ -799,37 +799,32 @@ export class ZongoDB<
         }
     }
 
-    // Recursively get all the schemas in a flattened format for path validation.
-    private getPathedSchemas(schemas: Schemas): Record<keyof Schemas, Record<string, z.ZodType<any>>> {
+    private getFlattenedSchemas(schemas: Schemas): Record<keyof Schemas, Record<string, z.ZodType<any>>> { 
         const result: Record<string, Record<string, z.ZodType<any>>> = {};
         const traverser = (
-            obj: any,
-            path: string,
-            collection: string
-        ) => {
-            if (obj instanceof z.ZodObject) {
-                for (const key in obj.shape) {
-                    traverser(
-                        obj.shape[key],
-                        path ? `${path}.${key}` : key,
-                        collection
-                    );
-                }
-            }
-            if (!result[collection]) {
-                result[collection] = {};
+            schema: any, 
+            path: string, 
+            collection: string 
+        ) => { 
+            if (!result[collection]) { 
+                result[collection] = {}; 
             }
             if (path !== "") {
-                result[collection][path] = obj;
+                result[collection][path] = schema;
+            }
+            if (schema instanceof z.ZodObject) { 
+                for (const key in schema.shape) { 
+                    traverser( 
+                        schema.shape[key], 
+                        path ? `${path}.${key}` : key, 
+                        collection 
+                    ); 
+                } 
             }
         };
-        for (const [collection, schema] of Object.entries(schemas)) {
-            traverser(
-                schema,
-                "",
-                collection
-            );
-        }
-        return result as any;
+        for (const [collection, schema] of Object.entries(schemas)) { 
+            traverser(schema, "", collection); 
+        } 
+        return result as any; 
     }
 }
