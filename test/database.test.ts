@@ -40,10 +40,19 @@ const testDatabase = new ZongoDB(
                         .min(10000)
                         .max(99999)
                 })).optional(),
+                other: z.object({
+                    test: z.string(),
+                }).optional(),
             })
         }),
     }
 );
+console.log(Object.values(testDatabase.flattenedSchemas).reduce(
+    (p, c) => {
+        return p.concat(Object.keys(c));
+    },
+    [] as string[]
+))
 
 describe(
     "Database",

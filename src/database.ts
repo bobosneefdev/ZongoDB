@@ -801,6 +801,7 @@ export class ZongoDB<
 
     private getFlattenedSchemas(schemas: Schemas): Record<keyof Schemas, Record<string, z.ZodType<any>>> { 
         const result: Record<string, Record<string, z.ZodType<any>>> = {};
+        
         const traverser = (
             schema: any, 
             path: string, 
@@ -820,11 +821,34 @@ export class ZongoDB<
                         collection 
                     ); 
                 }
+                return;
+            }
+            if (
+                schema &&
+                typeof schema === "object" &&
+                (
+                    schema._def?.typeName === "ZodNullable" ||
+                    schema._def?.typeName === "ZodOptional"
+                )
+            ) {
+                const innerType = schema._def.innerType;
+                if (innerType && typeof innerType === "object" && "shape" in innerType) {
+                    for (const key in innerType.shape) { 
+                        traverser( 
+                            innerType.shape[key], 
+                            path ? `${path}.${key}` : key, 
+                            collection 
+                        ); 
+                    }
+                }
+                return;
             }
         };
+        
         for (const [collection, schema] of Object.entries(schemas)) { 
             traverser(schema, "", collection); 
         } 
+        
         return result as any; 
     }
 }
