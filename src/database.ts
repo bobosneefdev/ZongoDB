@@ -242,13 +242,11 @@ export class ZongoDB<
                 updt.$set[path] = newVal;
             }
         }
-        this.verifySet(collection, updt.$set); // these will throw if bad
-        this.verifyUnset(collection, updt.$unset); // ^^^
         const result = await this.collections[collection].updateOne(
             {
                 "_id": docId,
             },
-            updt,
+            this.getCleanSetAndUnset(collection, updt),
         );
         if (!result.acknowledged) {
             ZongoLog.error(`Error updating document in collection "${collection}"`, result);
@@ -300,13 +298,10 @@ export class ZongoDB<
                 query,
                 this.collectionsWithOptionalFields.has(collection) ?
                     (() => {
-                        const { $set, $unset } = ZongoUtil.getSetAndUnsetPaths(update);
-                        this.verifySet(collection, $set);
-                        this.verifyUnset(collection, $unset);
-                        return {
-                            $set,
-                            $unset,
-                        }
+                        return this.getCleanSetAndUnset(
+                            collection,
+                            ZongoUtil.getSetAndUnsetPaths(update)
+                        );
                     })() :
                     {
                         $set: update,
@@ -355,13 +350,10 @@ export class ZongoDB<
                 query,
                 this.collectionsWithOptionalFields.has(collection) ?
                     (() => {
-                        const { $set, $unset } = ZongoUtil.getSetAndUnsetPaths(update);
-                        this.verifySet(collection, $set);
-                        this.verifyUnset(collection, $unset);
-                        return {
-                            $set,
-                            $unset,
-                        }
+                        return this.getCleanSetAndUnset(
+                            collection,
+                            ZongoUtil.getSetAndUnsetPaths(update)
+                        );
                     })() :
                     {
                         $set: update,
@@ -773,7 +765,22 @@ export class ZongoDB<
         }
     }
 
-    private verifySet<Collection extends keyof Schemas & string>(
+    private getCleanSetAndUnset<
+        Collection extends keyof Schemas & string
+    >(
+        collection: Collection,
+        data: {
+            $set: Record<string, any>,
+            $unset: Record<string, any>
+        }
+    ) {
+        return {
+            $set: this.cleanSet(collection, data.$set),
+            $unset: this.cleanUnset(collection, data.$unset),
+        };
+    }
+
+    private cleanSet<Collection extends keyof Schemas & string>(
         collection: Collection,
         set: Record<string, any>
     ) {
@@ -782,11 +789,12 @@ export class ZongoDB<
             if (!schema) {
                 throw new Error(`Invalid set path ${path} in collection ${collection}`);
             }
-            schema.parse(value);
+            set[path] = schema.parse(value);
         }
+        return set;
     }
 
-    private verifyUnset<Collection extends keyof Schemas & string>(
+    private cleanUnset<Collection extends keyof Schemas & string>(
         collection: Collection,
         unset: Record<string, any>
     ) {
@@ -795,8 +803,9 @@ export class ZongoDB<
             if (!schema) {
                 throw new Error(`Invalid unset path ${path} in collection ${collection}`);
             }
-            schema.parse(undefined);
+            unset[path] = schema.parse(undefined);
         }
+        return unset;
     }
 
     private getFlattenedSchemas(schemas: Schemas): Record<keyof Schemas, Record<string, z.ZodType<any>>> { 

@@ -161,7 +161,8 @@ describe(
                                 license_plate: "3EBK823",
                                 make: CarMake.HONDA,
                                 model: "Accord CrossTour",
-                                year: 2014
+                                year: 2014,
+                                invalid: "test"
                             });
                             return d;
                         }
