@@ -19,7 +19,7 @@ const testDatabase = new ZongoDB(
     {
         people: z.object({
             created_at: z.date(),
-            name: z.string(),
+            name: z.literal("John Doe"),
             property: z.object({
                 cars: z.array(z.object({
                     state_registered: z.nativeEnum(State),
@@ -40,11 +40,19 @@ const testDatabase = new ZongoDB(
                         .min(10000)
                         .max(99999)
                 })).optional(),
-                other: z.object({
-                    test: z.string(),
+                cryptocurrency: z.object({
+                    btc_address: z.string()
+                        .regex(/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$/),
                 }).optional(),
             })
         }),
+    },
+    {
+        initIndexes: {
+            people: {
+                "created_at": 1,
+            }
+        }
     }
 );
 console.log(Object.values(testDatabase.flattenedSchemas).reduce(
@@ -64,27 +72,29 @@ describe(
             }
         )
 
-        // Used as the key for this test suites document
         const date = new Date();
 
-        beforeAll(
+        // TESTS THAT MUST BE RUN IN ORDER
+        let deleteManyResolve: (v?: any) => void;
+        const deleteManyPromise = new Promise(resolve => deleteManyResolve = resolve);
+        it(
+            "deleteMany",
             async () => {
-                const indexesCreated = await testDatabase.createIndexes(
+                const result = await testDatabase.deleteMany(
                     "people",
-                    {
-                        "created_at": 1,
-                    }
+                    {}
                 );
-                expect(indexesCreated).toBe(true);
+                expect(result?.acknowledged).toBe(true);
+                deleteManyResolve();
             }
         )
 
-        // TESTS THAT MUST BE RUN IN ORDER
         let insertOneResolve: (v?: any) => void;
         const insertOnePromise = new Promise(resolve => insertOneResolve = resolve);
         it(
             "insertOne",
             async () => {
+                await deleteManyPromise;
                 const result = await testDatabase.insertOne(
                     "people",
                     {
@@ -133,11 +143,12 @@ describe(
                         detailed: true
                     }
                 );
-                if (typeof result === "boolean") {
+                if (result === null) {
                     expect(typeof result).toBe("object");
                 }
                 else {
                     expect(result.successes.length).toBeGreaterThan(0);
+                    expect(result.notAcknowledged).toBe(0);
                 }
                 transformManyResolve();
             }
@@ -190,7 +201,7 @@ describe(
                         created_at: date,
                     },
                 );
-                if (typeof result === "object") {
+                if (result !== null) {
                     expect(result.property.cars?.length).toBe(3);
                     expect(result.property.cars?.some(car => car.model === "Land Cruiser")).toBe(true);
                     expect(result.property.cars?.some(car => car.model === "Accord CrossTour")).toBe(true);
@@ -214,14 +225,16 @@ describe(
                         created_at: date,
                     },
                     {
-                        "property.homes": [{
-                            "address_1": "123 Main St",
-                            "address_2": null,
-                            "city": "Los Angeles",
-                            "state": State.CA,
-                            "zip": 90001
-                        }],
-                        "property.cars": undefined,
+                        property: {
+                            homes: [{
+                                "address_1": "123 Main St",
+                                "address_2": null,
+                                "city": "Los Angeles",
+                                "state": State.CA,
+                                "zip": 90001
+                            }],
+                            cars: undefined,
+                        }
                     }
                 );
                 expect(result.modifiedCount).toBe(1);
@@ -242,7 +255,7 @@ describe(
                     },
                 );
                 expect(Array.isArray(result)).toBe(true);
-                if (typeof result !== "boolean") {
+                if (result !== null) {
                     expect(result[0].property.cars).toBe(undefined);
                     expect(result[0].property.homes?.length).toBe(1);
                 }
@@ -260,7 +273,7 @@ describe(
                     {},
                 );
                 expect(Array.isArray(result)).toBe(true);
-                if (typeof result !== "boolean") {
+                if (result !== null) {
                     expect(result.length).toBeGreaterThan(0);
                 }
             }

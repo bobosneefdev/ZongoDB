@@ -1,6 +1,11 @@
 # ZongoDB
 Zod schemas + MongoDB = <3
 
+# Important Notes
+- This package isn't meant to be bullet-proof by any means, it's a project to help me learn.
+- I have tried to keep a bit of balance of overhead/type safety.
+- I am still relatively new to coding, so brace yourself if you look at the source code 😭
+
 # Install
 ```cmd
 npm install @bobosneefdev/zongodb
@@ -24,56 +29,98 @@ z.object({
 });
 ```
 
-# Notes
-- This package isn't meant to be bullet-proof by any means.
-- I have tried to keep a bit of balance of overhead/type safety.
-- I am still relatively new to coding, so brace yourself if you look at the source code 😭
-
 # Examples
 ```ts
-const database = new ZongoDB(
-    "MyDatabase",
+const testDatabase = new ZongoDB(
+    "ZongoTest",
     {
-        users: z.object({
-            internalId: z.number(),
-            joined: z.date(),
-            balance: z.object({
-                currentCents: z.number().int(),
-                history: z.array(z.object({
-                    changeCents: z.number().int(),
-                    reason: z.string(),
-                    timestamp: z.date(),
-                })),
+        people: z.object({
+            created_at: z.date(),
+            name: z.literal("John Doe"),
+            property: z.object({
+                cars: z.array(z.object({
+                    state_registered: z.nativeEnum(State),
+                    license_plate: z.string(),
+                    make: z.nativeEnum(CarMake),
+                    model: z.string(),
+                    year: z.number()
+                        .int()
+                })).optional(),
+                homes: z.array(z.object({
+                    address_1: z.string(),
+                    address_2: z.string()
+                        .nullable(),
+                    city: z.string(),
+                    state: z.nativeEnum(State),
+                    zip: z.number()
+                        .int()
+                        .min(10000)
+                        .max(99999)
+                })).optional(),
+                cryptocurrency: z.object({
+                    btc_address: z.string()
+                        .regex(/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$/),
+                }).optional(),
             })
-        })
-    }
-);
-
-// Zongo verifies that balance.currentCents could be zero ✔️
-const theRightWay = await database.findMany(
-    "users",
+        }),
+    },
     {
-        "balance.currentCents": 0,
-    }
-);
-
-// Zongo will fail to parse balance.currentCents since it must be an integer ❌
-const theWrongWay = await database.findMany(
-    "users",
-    {
-        "balance.currentCents": 0.92
-    }
-);
-
-// Zongo does not verify conditionals in queries yet, but it will still work 🟡
-const theWrongWay = await database.findMany(
-    "users",
-    {
-        "balance.currentCents": {
-            $gt: 0
+        initIndexes: {
+            people: {
+                "created_at": 1,
+            }
         }
     }
 );
 
-// I'll add more examples soon, in the meantime just play around with it :)
+// valid ✔️
+await testDatabase.insertOne(
+    "people",
+    {
+        created_at: date,
+        name: "John Doe",
+        property: {
+            cars: [{
+                state_registered: State.CA,
+                license_plate: "7TJF456",
+                make: CarMake.VOLKSWAGEN,
+                model: "Passat",
+                year: 2001
+            }],
+        }
+    },
+);
+
+// fails to parse the document since "property" is required ❌
+await testDatabase.insertOne(
+    "people",
+    {
+        created_at: date,
+        name: "John Doe",
+    },
+);
+
+// valid ✔️
+await database.findOne(
+    "people",
+    {
+        "property.crypto.btc_address": "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo",
+    }
+);
+
+// fails to parse since regex is not matched ❌
+await database.findMany(
+    "people",
+    {
+        "property.crypto.btc_address": "totally-not-a-real-wallet",
+    }
+);
+
+// fails to parse since literal is invalid ❌
+await database.deleteOne(
+    "people",
+    {
+        "name": "John Deer"
+    }
+);
 ```

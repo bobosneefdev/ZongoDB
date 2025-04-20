@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { ZongoLog } from "./logger";
 
 export class ZongoUtil {
@@ -92,5 +93,44 @@ export class ZongoUtil {
             $set,
             $unset
         };
+    }
+
+    static unwrapSchema(schema: z.ZodTypeAny) {
+        let result = schema;
+        while (true) {
+            if (
+                result._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional ||
+                result._def.typeName === z.ZodFirstPartyTypeKind.ZodNullable
+            ) {
+                result = result._def.innerType;
+            }
+            else if (result._def.typeName === z.ZodFirstPartyTypeKind.ZodEffects) {
+                result = result._def.schema;
+            }
+            else {
+                break;
+            }
+        }
+        return result;
+    }
+
+    static doesSchemaHaveOptionalFields(schema: z.ZodObject<any>) {
+        for (const value of Object.values(schema.shape)) {
+            if (
+                value instanceof z.ZodOptional ||
+                (
+                    value instanceof z.ZodObject &&
+                    this.doesSchemaHaveOptionalFields(value)
+                ) ||
+                (
+                    value instanceof z.ZodArray &&
+                    value.element instanceof z.ZodObject &&
+                    this.doesSchemaHaveOptionalFields(value.element)
+                )
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 }
