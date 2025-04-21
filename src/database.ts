@@ -241,7 +241,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
      * Update document in the collection.
      * @param collection - Name of the collection to update.
      * @param query - Query to find the document to update.
-     * @param docData - Partial document data to update, must be full document if using upsert.
+     * @param update - Data to update, must be complete document if using upsert.
      * @param opts.upsert - If true, insert a new document if no document matches the query. Full document required.
      * @returns Document changed count, or null on failure.
      * @throws If zod parsing fails for the query, update, or existing document (if using transform type), or if upsert is attempted on incomplete document.
@@ -249,7 +249,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     async updateOne<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
-        docData: Partial<z.infer<T[K]>>,
+        update: Record<string, any>,
         opts?: {
             upsert?: boolean;
         }
@@ -257,7 +257,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         return await this.update(
             collection,
             query,
-            docData,
+            update,
             "updateOne",
             opts
         );
@@ -267,7 +267,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
      * Update documents in the collection.
      * @param collection - Name of the collection to update.
      * @param query - Query to find the documents to update.
-     * @param docData - Partial document data to update, must be full document if using upsert.
+     * @param update - Data to update, must be complete document if using upsert.
      * @param opts.upsert - If true, insert a new document if no document matches the query.
      * @returns Documents changed count, or null on failure.
      * @throws If zod parsing fails for the query, update, or existing document (if using transform type), or if upsert is attempted on incomplete document.
@@ -275,7 +275,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     async updateMany<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
-        docData: Partial<z.infer<T[K]>>,
+        update: Record<string, any>,
         opts?: {
             upsert?: boolean;
         }
@@ -283,7 +283,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         return await this.update(
             collection,
             query,
-            docData,
+            update,
             "updateMany",
             opts
         );
@@ -292,22 +292,26 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     private async update<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
-        partialDoc: Partial<z.infer<T[K]>>,
+        update: Record<string, any>,
         type: "updateOne" | "updateMany",
         opts?: {
             upsert?: boolean;
         }
     ) {
         this.verifyQuery(collection, query);
+        for (const key in update) {
+            const schema = this.getSchemaAtPath(collection, key);
+            schema.parse(update[key]);
+        }
         if (opts?.upsert === true) {
-            const parsed = this.schemas[collection].safeParse(partialDoc);
+            const parsed = this.schemas[collection].safeParse(update);
             if (!parsed.success) {
                 throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
             }
         }
         return await this.collections[collection][type](
             query,
-            this.getSafeSetAndUnset(collection, partialDoc),
+            this.getSafeSetAndUnset(collection, update),
             opts
         );
     }
@@ -570,7 +574,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         collection: K,
         data: Record<string, any>
     ) {
-        const {$set, $unset} = ZongoUtil.getSetAndUnsetPaths(data);
+        const {$set, $unset} = ZongoUtil.getSetAndUnset(data);
         for (const key in $set) {
             $set[key] = this.getSchemaAtPath(collection, key).parse($set[key]);
         }

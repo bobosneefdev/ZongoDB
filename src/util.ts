@@ -46,53 +46,72 @@ export class ZongoUtil {
         return result;
     }
 
-    static getSetAndUnsetPaths<T>(obj: T) {
-        const $set: Record<string, any> = {};
-        const $unset: Record<string, string> = {};
-        if (
-            obj === null ||
-            typeof obj !== "object" ||
-            Array.isArray(obj)
-        ) {
-            throw new Error("Cannot update an array. Please update an object instead.");
-        }
+    // static getSetAndUnset<T>(obj: T) {
+    //     const $set: Record<string, any> = {};
+    //     const $unset: Record<string, string> = {};
+    //     if (
+    //         obj === null ||
+    //         typeof obj !== "object" ||
+    //         Array.isArray(obj)
+    //     ) {
+    //         throw new Error("Please update an object instead.");
+    //     }
         
-        for (const [key, value] of Object.entries(obj)) {
-            if (key === "_id") {
-                ZongoLog.warn("_id field is immutable, therefore your change to it was ignored. Please use a different field.");
-                continue;
-            }
-            else if (value === undefined) {
-                $unset[key] = "";
-            } else if (
-                value !== null &&
-                typeof value === "object" &&
-                !Array.isArray(value) && 
-                Object.keys(value).length > 0
-            ) {
-                const nestedResult = this.getSetAndUnsetPaths(value);
-                if (
-                    Object.keys(nestedResult.$set).length > 0 ||
-                    Object.keys(nestedResult.$unset).length > 0
-                ) {
-                    for (const nestedKey in nestedResult.$set) {
-                        $set[`${key}.${nestedKey}`] = nestedResult.$set[nestedKey];
-                    }
-                    for (const nestedKey in nestedResult.$unset) {
-                        $unset[`${key}.${nestedKey}`] = "";
-                    }
-                } else {
-                    $set[key] = value;
+    //     for (const key in obj) {
+    //         if (key === "_id") {
+    //             ZongoLog.warn("_id field is immutable, therefore your change to it was ignored. Please use a different field.");
+    //             continue;
+    //         }
+    //         else if (obj[key] === undefined) {
+    //             $unset[key] = "";
+    //         } else if (
+    //             obj[key] !== null &&
+    //             typeof obj[key] === "object" &&
+    //             !Array.isArray(obj[key]) && 
+    //             Object.keys(obj[key]).length > 0
+    //         ) {
+    //             const nestedResult = this.getSetAndUnset(obj[key]);
+    //             if (
+    //                 Object.keys(nestedResult.$set).length > 0 ||
+    //                 Object.keys(nestedResult.$unset).length > 0
+    //             ) {
+    //                 for (const nestedKey in nestedResult.$set) {
+    //                     $set[`${key}.${nestedKey}`] = nestedResult.$set[nestedKey];
+    //                 }
+    //                 for (const nestedKey in nestedResult.$unset) {
+    //                     $unset[`${key}.${nestedKey}`] = "";
+    //                 }
+    //             } else {
+    //                 $set[key] = obj[key];
+    //             }
+    //         } else {
+    //             $set[key] = obj[key];
+    //         }
+    //     }
+        
+    //     return {
+    //         $set,
+    //         $unset
+    //     };
+    // }
+
+    static getSetAndUnset<T>(obj: T, currentPath: string[] = []) {
+        const unset: Record<string, ""> = {};
+        for (const key in obj) {
+            for (const key in obj) {
+                if (obj[key] === undefined) {
+                    unset[[...currentPath, key].join(".")] = "";
+                    delete obj[key];
                 }
-            } else {
-                $set[key] = value;
+            }
+            if (typeof obj[key] === "object" && obj[key] !== null && !Array.isArray(obj[key])) {
+                this.getSetAndUnset(obj[key], [...currentPath, key]);
             }
         }
-        
         return {
-            $set,
-            $unset
-        };
+            $set: obj,
+            $unset: unset
+        }
     }
 
     static unwrapSchema(schema: z.ZodTypeAny) {
