@@ -11,14 +11,14 @@ describe(
                 homes: z.array(z.object({
                     address_1: z.string(),
                     address_2: z.string().optional(),
-                })).refine(d => d.some(home => home.address_1.length > 0)).optional(),
+                })).refine(d => d.some(home => home.address_1.length > 0)),
             })),
         });
 
         it(
             "Detect optional fields on a complex schema",
             async () => {
-                const result = ZongoUtil.doesSchemaHaveOptionalFields(testSchema);
+                const result = ZongoUtil.doesValidSchemaHaveOptionalFields(testSchema);
                 expect(result).toBe(true);
             }
         )

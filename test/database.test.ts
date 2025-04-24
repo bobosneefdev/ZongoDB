@@ -67,7 +67,7 @@ console.log(Object.values(testDatabase.flattenedSchemas).reduce(
         return p.concat(Object.keys(c));
     },
     [] as string[]
-))
+));
 
 describe(
     "Database",
@@ -84,7 +84,7 @@ describe(
                     "people",
                     {}
                 );
-                expect(result?.acknowledged).toBe(true);
+                expect(result.acknowledged).toBe(true);
                 deleteManyResolve();
             }
         )

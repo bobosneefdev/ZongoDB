@@ -21,7 +21,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     readonly db: mongoDB.Db;
     readonly flattenedSchemas: Readonly<Record<keyof T, Readonly<Record<string, z.ZodType<any>>>>>;
     private collections: Readonly<Record<keyof T, mongoDB.Collection>>;
-    private backupDir: string;
+    private defaultBackupDir: string;
     private warningMessagesSent: Record<string, number> = {};
     collectionsWithOptionalFields: Set<keyof T> = new Set();
 
@@ -65,11 +65,11 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             {} as Record<keyof T, mongoDB.Collection>
         );
         for (const [collection, schema] of Object.entries(schemas)) {
-            if (ZongoUtil.doesSchemaHaveOptionalFields(schema)) {
+            if (ZongoUtil.doesValidSchemaHaveOptionalFields(schema)) {
                 this.collectionsWithOptionalFields.add(collection as keyof T);
             }
         }
-        this.backupDir = path.join(kZongoConfig.BACKUP_DIR, name);
+        this.defaultBackupDir = path.join(kZongoConfig.BACKUP_DIR, name);
         ZongoLog.debug(`Constructed database "${name}"`);
         if (opts?.initIndexes) {
             const now = Date.now();
@@ -342,18 +342,9 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     async deleteOne<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
+        opts?: mongoDB.DeleteOptions
     ) {
-        this.verifyQuery(collection, query);
-        try {
-            return await this.collections[collection].deleteMany(query);
-        }
-        catch (error) {
-            ZongoLog.error("deleteOne failed: ", error);
-            if (error instanceof z.ZodError) {
-                ZongoLog.error("Zod error: ", error.errors);
-            }
-            return null;
-        }
+        return await this.delete(collection, query, "deleteOne", opts);
     }
 
     /**
@@ -366,18 +357,19 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     async deleteMany<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
+        opts?: mongoDB.DeleteOptions
+    ) {
+        return await this.delete(collection, query, "deleteMany", opts);
+    }
+
+    private async delete<K extends keyof T & string>(
+        collection: K,
+        query: Record<string, any>,
+        type: "deleteOne" | "deleteMany",
+        opts?: mongoDB.DeleteOptions
     ) {
         this.verifyQuery(collection, query);
-        try {
-            return await this.collections[collection].deleteMany(query);
-        }
-        catch (error) {
-            ZongoLog.error("deleteMany failed: ", error);
-            if (error instanceof z.ZodError) {
-                ZongoLog.error("Zod error: ", error.errors);
-            }
-            return null;
-        }
+        return await this.collections[collection][type](query, opts);
     }
 
     /**
@@ -459,6 +451,21 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         return this.collections[collection];
     }
 
+    async backupDatabase(
+        maxBackups = 10,
+        opts?: {
+            dirOverride?: string;
+            compressed?: boolean;
+        }
+    ) {
+        const all = await Promise.all(Object.keys(this.schemas).map(collection => this.backupCollection(collection, maxBackups, opts)));
+        const successes = all.filter(Boolean);
+        return {
+            successes: successes.length,
+            failures: all.length - successes.length,
+        };
+    }
+
     /**
      * Creates a backup of the collection using mongodump.
      * @param collection - Name of the collection to backup.
@@ -471,11 +478,12 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         collection: K,
         maxBackups = 10,
         opts?: {
+            dirOverride?: string;
             compressed?: boolean;
         }
     ) {
         const backupPath = path.join(
-            this.backupDir,
+            opts?.dirOverride ?? this.defaultBackupDir,
             collection,
             new Date().toISOString().replace(/:/g, "-")
         );
@@ -525,7 +533,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         maxBackups: number
     ) {
         const dir = path.join(
-            this.backupDir,
+            this.defaultBackupDir,
             collection
         );
         if (!fs.existsSync(dir)) {
@@ -607,48 +615,57 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         return this.flattenedSchemas[collection][path];
     }
 
-    private createSchemaPathMap(schemas: T): Record<keyof T, Record<string, z.ZodType<any>>> { 
+    private createSchemaPathMap(schemas: T): Record<keyof T, Record<string, z.ZodType<any>>> {
         const result: Record<string, Record<string, z.ZodType<any>>> = {};
-        const traverser = (
-            schema: any, 
-            path: string, 
-            collection: string 
-        ) => {
-            if (!result[collection]) {
-                result[collection] = {};
-            }
-            if (path !== "") {
-                result[collection][path] = schema;
-            }
-            
-            let unwrapped = schema;
-            while (true) {
-                if (unwrapped?._def?.typeName === "ZodEffects") {
-                    unwrapped = unwrapped._def.schema;
+        for (const [collection, schema] of Object.entries(schemas)) {
+            result[collection] = {};
+            const stack: Array<{schema: any; path: string }> = [{ schema, path: "" }];   
+            while (stack.length > 0) {
+                const { schema, path } = stack.pop()!;
+                if (path !== "") {
+                    result[collection][path] = schema;
                 }
-                else if (
-                    unwrapped._def?.typeName === "ZodNullable" ||
-                    unwrapped._def?.typeName === "ZodOptional"
-                ) {
-                    unwrapped = unwrapped._def.innerType;
-                }
-                else {
-                    break;
+                const unwrapped = ZongoUtil.unwrapSchema(schema);
+                if (ZongoUtil.isZodObject(unwrapped)) {
+                    for (const key in unwrapped.shape) {
+                        stack.push({
+                            schema: unwrapped.shape[key],
+                            path: path ? `${path}.${key}` : key
+                        });
+                    }
                 }
             }
-            if (unwrapped && typeof unwrapped === "object" && "shape" in unwrapped) {
-                for (const key in unwrapped.shape) { 
-                    traverser( 
-                        unwrapped.shape[key], 
-                        path ? `${path}.${key}` : key, 
-                        collection 
-                    ); 
-                }
-            }
-        };
-        for (const [collection, schema] of Object.entries(schemas)) { 
-            traverser(schema, "", collection); 
         }
-        return result as any; 
+        return result as any;
     }
+
+    // private createSchemaPathMap(schemas: T): Record<keyof T, Record<string, z.ZodType<any>>> { 
+    //     const result: Record<string, Record<string, z.ZodType<any>>> = {};
+    //     const traverser = (
+    //         schema: any, 
+    //         path: string, 
+    //         collection: string 
+    //     ) => {
+    //         if (!result[collection]) {
+    //             result[collection] = {};
+    //         }
+    //         if (path !== "") {
+    //             result[collection][path] = schema;
+    //         }
+    //         const unwrapped = ZongoUtil.unwrapSchema(schema);
+    //         if (ZongoUtil.isZodObject(unwrapped)) {
+    //             for (const key in unwrapped.shape) { 
+    //                 traverser(
+    //                     unwrapped.shape[key], 
+    //                     path ? `${path}.${key}` : key, 
+    //                     collection 
+    //                 ); 
+    //             }
+    //         }
+    //     };
+    //     for (const [collection, schema] of Object.entries(schemas)) { 
+    //         traverser(schema, "", collection); 
+    //     }
+    //     return result as any; 
+    // }
 }
