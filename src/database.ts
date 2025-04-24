@@ -31,7 +31,13 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         opts?: {
             mongoClientOpts?: mongoDB.MongoClientOptions;
             mongoDbOpts?: mongoDB.DbOptions;
-            initIndexes?: Record<keyof T, Record<string, 1 | -1>>;
+            initIndexes?: Partial<Record<
+                keyof T,
+                Array<{
+                    index: Record<string, mongoDB.IndexDirection>,
+                    options?: mongoDB.CreateIndexesOptions
+                }>
+            >>;
         }
     ) {
         this.name = name;
@@ -67,7 +73,17 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         ZongoLog.debug(`Constructed database "${name}"`);
         if (opts?.initIndexes) {
             const now = Date.now();
-            Promise.all(Object.entries(opts.initIndexes).map(([collection, indexes]) => this.createIndexes(collection as any, indexes))).then(
+            Promise.all(
+                Object.entries(opts.initIndexes).reduce(
+                    (p, [collection, params]) => {
+                        if (params) {
+                            p.push(...params.map(p => this.createIndex(collection, p.index, p.options)));
+                        }
+                        return p;
+                    },
+                    [] as Promise<void>[]
+                )
+            ).then(
                 _ => ZongoLog.debug(`Initialized indexes for database "${name}" in ${Date.now() - now}ms`),
                 err => {
                     ZongoLog.error(`Failed to initialize indexes for database "${name}":`, err);
@@ -111,7 +127,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         doc: z.infer<T[K]>
     ) {
         return this.collectionsWithOptionalFields.has(collection) ?
-            ZongoUtil.removeUndefinedValues(this.schemas[collection].parse(doc)) :
+            ZongoUtil.removeExplicitUndefined(this.schemas[collection].parse(doc)) :
             this.schemas[collection].parse(doc);
     }
 
@@ -415,24 +431,21 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     /**
      * Creates index(es) on the given path for the given collection.
      * @param collection - Name of the collection to create index on.
-     * @param indexes - Indexes to create on the collection.
+     * @param index - Index keys (multiple to make compound index) to create on the collection.
      * @param options - Options for the index creation.
      * @throws If any index path is invalid.
      * */
-    async createIndexes<K extends keyof T & string>(
+    async createIndex<K extends keyof T & string>(
         collection: K,
-        indexes: Partial<Record<string, 1 | -1>>,
+        index: Record<string, mongoDB.IndexDirection>,
         options?: mongoDB.CreateIndexesOptions,
     ) {
-        for (const key in indexes) {
+        for (const key in index) {
             if (!this.flattenedSchemas[collection][key]) {
                 throw new Error(`Invalid index path "${key}" in collection ${collection}`);
             }
         }
-        await this.collections[collection].createIndex(
-            indexes as any,
-            options
-        );
+        await this.collections[collection].createIndex(index, options);
         ZongoLog.debug(`Created index for collection ${collection}`);
     }
 

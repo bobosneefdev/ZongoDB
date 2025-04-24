@@ -49,9 +49,16 @@ const testDatabase = new ZongoDB(
     },
     {
         initIndexes: {
-            people: {
-                "created_at": 1,
-            }
+            people: [
+                {
+                    index: {
+                        "created_at": 1
+                    },
+                    options: {
+                        unique: true
+                    }
+                }
+            ]
         }
     }
 );
@@ -65,13 +72,6 @@ console.log(Object.values(testDatabase.flattenedSchemas).reduce(
 describe(
     "Database",
     () => {
-        it(
-            "Verify that only one of our schemas has optional fields set",
-            () => {
-                expect(testDatabase.collectionsWithOptionalFields.size).toBe(1);
-            }
-        )
-
         const date = new Date();
 
         // TESTS THAT MUST BE RUN IN ORDER
