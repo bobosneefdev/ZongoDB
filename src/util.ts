@@ -14,65 +14,74 @@ export class ZongoUtil {
             ) {
                 throw new Error(`Invalid object at path: ${pathStr(i)}`);
             }
-            else if (!(keys[i] in current)) {
-                throw new Error(`Path does not exist in object: ${pathStr(i + 1)}`);
-            }
             current = current[keys[i]];
         }
         return current;
     }
 
     /**
-     * Ensures schema is compatible with Zongo + Determine whether it has any optional fields.
+     * Ensures schema is compatible with Zongo + Determine whether the schema will need undefined values to be cleaned.
      * @param schema - The schema to check.
-     * @returns Whether the schema has any optional fields.
+     * @returns Whether the schema will need undefined values to be cleaned.
      * */
-    static doesValidSchemaHaveOptionalFields(schema: z.ZodType<any>): boolean {
-        if (this.isZodOptional(schema) || this.isZodDefault(schema)) {
-            this.doesValidSchemaHaveOptionalFields(schema._def.innerType);
+    static verifySchemaAndCheckIfUndefinedCanExist(schema: z.ZodTypeAny): boolean {
+        if (this.isZodUndefined(schema)) {
             return true;
         }
-        else if (this.isZodNullable(schema)) {
-            return this.doesValidSchemaHaveOptionalFields(schema._def.innerType);
+        else if (this.isZodSet(schema)) {
+            throw new Error("ZodSet is not currently supported in Zongo schemas, consider using arrays instead.")
         }
-        else if (this.isZodEffects(schema)) {
-            return this.doesValidSchemaHaveOptionalFields(schema._def.schema);
+        else if (this.isZodMap(schema)) {
+            throw new Error("ZodMap is not currently supported in Zongo schemas, consider using objects/records instead.");
         }
-        else if (this.isZodObject(schema)) {
-            const results: Array<boolean> = Object.values(schema.shape).map((schema: any) => this.doesValidSchemaHaveOptionalFields(schema));
-            return results.some(r => r === true);
+        else if (this.isZodIntersection(schema)) {
+            throw new Error("ZodIntersection is not currently supported in Zongo schemas, consider using the merge method instead.");
+        }
+        else if (this.isZodLiteral(schema)) {
+            if (typeof schema._def.value === "bigint") {
+                throw new Error(`BigInt is not supported in Zongo schemas.`);
+            }
+            return false;
         }
         else if (
-            this.isZodRecord(schema) ||
-            this.isZodMap(schema)
+            this.isZodBoolean(schema) ||
+            this.isZodDate(schema) ||
+            this.isZodEnum(schema) ||
+            this.isZodNativeEnum(schema) ||
+            this.isZodNaN(schema) ||
+            this.isZodNumber(schema) ||
+            this.isZodString(schema)
         ) {
-            return this.doesValidSchemaHaveOptionalFields(schema.valueSchema);
+            return false;
+        }
+        else if (this.isZodOptional(schema) || this.isZodDefault(schema)) {
+            this.verifySchemaAndCheckIfUndefinedCanExist(schema._def.innerType);
+            return true;
         }
         else if (this.isZodArray(schema)) {
-            return this.doesValidSchemaHaveOptionalFields(schema.element);
+            return this.verifySchemaAndCheckIfUndefinedCanExist(schema.element);
         }
-        else if (
-            this.isZodUnion(schema) ||
-            this.isZodDiscriminatedUnion(schema)
-        ) {
-            const results: Array<boolean> = schema.options.map((schema: any) => this.doesValidSchemaHaveOptionalFields(schema));
+        else if (this.isZodUnion(schema) || this.isZodDiscriminatedUnion(schema)) {
+            const results: Array<boolean> = schema.options.map((schema: any) => this.verifySchemaAndCheckIfUndefinedCanExist(schema));
             return results.some(r => r === true);
+        }
+        else if (this.isZodNullable(schema)) {
+            return this.verifySchemaAndCheckIfUndefinedCanExist(schema._def.innerType);
+        }
+        else if (this.isZodEffects(schema)) {
+            return this.verifySchemaAndCheckIfUndefinedCanExist(schema._def.schema);
+        }
+        else if (this.isZodObject(schema)) {
+            return Object.values(schema.shape)
+                .map((schema: any) => this.verifySchemaAndCheckIfUndefinedCanExist(schema))
+                .some(r => r === true);
+        }
+        else if (this.isZodRecord(schema)) {
+            return this.verifySchemaAndCheckIfUndefinedCanExist(schema.valueSchema);
         }
         else if (this.isZodTuple(schema)) {
-            const results: Array<boolean> = schema._def.items.map((schema: any) => this.doesValidSchemaHaveOptionalFields(schema));
+            const results: Array<boolean> = schema._def.items.map((schema: any) => this.verifySchemaAndCheckIfUndefinedCanExist(schema));
             return results.some(r => r === true);
-        }
-        else if (
-            this.isZodIntersection(schema) ||
-            this.isZodLazy(schema) ||
-            this.isZodSet(schema) ||
-            this.isZodPromise(schema) ||
-            this.isZodNaN(schema) ||
-            this.isZodBigInt(schema) ||
-            this.isZodVoid(schema) ||
-            this.isZodFunction(schema)
-        ) {
-            throw new Error(`${schema._def.typeName} is not supported in Zongo schemas.`);
         }
         else if (this.isZodLiteral(schema)) {
             if (typeof schema._def.value === "bigint") {
@@ -80,47 +89,89 @@ export class ZongoUtil {
             }
             return schema._def.value === undefined;
         }
-        return false;
+        else {
+            throw new Error(`${schema._def.typeName} is not supported in Zongo schemas.`);
+        }
     }
 
-    static isZodFunction(schema: z.ZodTypeAny): schema is z.ZodFunction<any, any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodFunction;
+    // return true
+    static isZodUndefined(schema: z.ZodTypeAny): schema is z.ZodUndefined {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodUndefined;
     }
 
-    static isZodVoid(schema: z.ZodTypeAny): schema is z.ZodVoid {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodVoid;
+    // throw, use plain array instead
+    static isZodSet(schema: z.ZodTypeAny): schema is z.ZodSet<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodSet;
     }
 
+    // throw, use plain objects/records instead
+    static isZodMap(schema: z.ZodTypeAny): schema is z.ZodMap<any, any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodMap;
+    }
+
+    // throw, use merge method instead
+    static isZodIntersection(schema: z.ZodTypeAny): schema is z.ZodIntersection<any, any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodIntersection;
+    }
+
+    // throw if bigint, return false otherwise
     static isZodLiteral(schema: z.ZodTypeAny): schema is z.ZodLiteral<any> {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodLiteral;
     }
 
-    static isZodBigInt(schema: z.ZodTypeAny): schema is z.ZodBigInt {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodBigInt;
+    // return false
+    static isZodBoolean(schema: z.ZodTypeAny): schema is z.ZodBoolean {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodBoolean;
+    }
+
+    static isZodDate(schema: z.ZodTypeAny): schema is z.ZodDate {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDate;
+    }
+
+    static isZodEnum(schema: z.ZodTypeAny): schema is z.ZodEnum<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodEnum;
     }
 
     static isZodNaN(schema: z.ZodTypeAny): schema is z.ZodNaN {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodNaN;
     }
 
-    static isZodPromise(schema: z.ZodTypeAny): schema is z.ZodPromise<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodPromise;
+    static isZodNativeEnum(schema: z.ZodTypeAny): schema is z.ZodNativeEnum<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodNativeEnum;
     }
 
-    static isZodIntersection(schema: z.ZodTypeAny): schema is z.ZodIntersection<any, any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodIntersection;
+    static isZodNull(schema: z.ZodTypeAny): schema is z.ZodNull {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodNull;
     }
 
-    static isZodLazy(schema: z.ZodTypeAny): schema is z.ZodLazy<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodLazy;
+    static isZodNumber(schema: z.ZodTypeAny): schema is z.ZodNumber {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodNumber;
+    }
+
+    static isZodString(schema: z.ZodTypeAny): schema is z.ZodString {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodString;
+    }
+
+    // recursive call, but return true
+    static isZodOptional(schema: z.ZodTypeAny): schema is z.ZodOptional<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional;
     }
 
     static isZodDefault(schema: z.ZodTypeAny): schema is z.ZodDefault<any> {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDefault;
     }
 
-    static isZodTuple(schema: z.ZodTypeAny): schema is z.ZodTuple<any, any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodTuple;
+    // recursive return
+    static isZodArray(schema: z.ZodTypeAny): schema is z.ZodArray<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodArray;
+    }
+
+    static isZodUnion(schema: z.ZodTypeAny): schema is z.ZodUnion<any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodUnion;
+    }
+
+    static isZodDiscriminatedUnion(schema: z.ZodTypeAny): schema is z.ZodDiscriminatedUnion<any, any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDiscriminatedUnion;
     }
 
     static isZodNullable(schema: z.ZodTypeAny): schema is z.ZodNullable<any> {
@@ -131,10 +182,6 @@ export class ZongoUtil {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodEffects;
     }
 
-    static isZodOptional(schema: z.ZodTypeAny): schema is z.ZodOptional<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodOptional;
-    }
-
     static isZodObject(schema: z.ZodTypeAny): schema is z.ZodObject<any> {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodObject;
     }
@@ -143,24 +190,8 @@ export class ZongoUtil {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodRecord;
     }
 
-    static isZodArray(schema: z.ZodTypeAny): schema is z.ZodArray<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodArray;
-    }
-    
-    static isZodUnion(schema: z.ZodTypeAny): schema is z.ZodUnion<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodUnion;
-    }
-    
-    static isZodDiscriminatedUnion(schema: z.ZodTypeAny): schema is z.ZodDiscriminatedUnion<any, any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodDiscriminatedUnion;
-    }
-
-    static isZodMap(schema: z.ZodTypeAny): schema is z.ZodMap<any, any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodMap;
-    }
-
-    static isZodSet(schema: z.ZodTypeAny): schema is z.ZodSet<any> {
-        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodSet;
+    static isZodTuple(schema: z.ZodTypeAny): schema is z.ZodTuple<any, any> {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodTuple;
     }
     
     static removeExplicitUndefined<T>(obj: T): T {
@@ -216,12 +247,5 @@ export class ZongoUtil {
             }
         }
         return result;
-    }
-
-    static isDate(value: any): value is Date {
-        if (Object.prototype.toString.call(value) === "[object Date]") {
-            return true;
-        }
-        return false;
     }
 }

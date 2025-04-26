@@ -1,4 +1,4 @@
 node_modules
 dist
-zongo_config.json
 .npmrc
+ZongoDB

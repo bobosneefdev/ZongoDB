@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ZongoDB } from "../src/database";
+import { ZongoUtil } from "../src/util";
 
 enum State {
     CA = "CA",
@@ -44,7 +45,29 @@ const testDatabase = new ZongoDB(
                     btc_address: z.string()
                         .regex(/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$/),
                 }).optional(),
-            })
+            }),
+            unionTest: z.union([
+                z.object({
+                    name: z.string(),
+                    age: z.number()
+                }),
+                z.object({
+                    name: z.string(),
+                    age: z.number()
+                }),
+                z.object({
+                    name: z.string(),
+                    age: z.number()
+                })
+            ]).optional(),
+            tupleTest: z.tuple([
+                z.object({
+                    name: z.string(),
+                    age: z.number()
+                }),
+                z.string(),
+                z.number()
+            ]).optional(),
         }),
     },
     {
@@ -62,12 +85,16 @@ const testDatabase = new ZongoDB(
         }
     }
 );
-console.log(Object.values(testDatabase.flattenedSchemas).reduce(
-    (p, c) => {
-        return p.concat(Object.keys(c));
-    },
-    [] as string[]
-));
+for (const [collection, pathSchemas] of Object.entries(testDatabase.flattenedSchemas)) {
+    for (const [path, schema] of Object.entries(pathSchemas)) {
+        if (ZongoUtil.isZodUnion(schema)) {
+            console.log(`${collection}: ${path} - ${schema._def.options.map(o => o._def.typeName).join(", ")}`);
+        }
+        else {
+            console.log(`${collection}: ${path} - ${schema._def.typeName}`);
+        }
+    }
+}
 
 describe(
     "Database",
@@ -143,13 +170,7 @@ describe(
                         detailed: true
                     }
                 );
-                if (result === null) {
-                    expect(typeof result).toBe("object");
-                }
-                else {
-                    expect(result.successes.length).toBeGreaterThan(0);
-                    expect(result.notAcknowledged).toBe(0);
-                }
+                expect(result.modifiedCount).toBeGreaterThan(0);
                 transformManyResolve();
             }
         );
@@ -179,12 +200,7 @@ describe(
                         }
                     }
                 );
-                if (typeof result === "boolean") {
-                    expect(typeof result).toBe("object");
-                }
-                else {
-                    expect(result.updated).toBeDefined();
-                }
+                expect(result?.result.modifiedCount ?? 0).toBeGreaterThan(0);
                 transformOneResolve();
             }
         );
@@ -248,12 +264,26 @@ describe(
             "findMany with query",
             async () => {
                 await updateManyPromise;
+
+                for (let i = 0; i < 3; i++) {
+                    await testDatabase.insertOne(
+                        "people",
+                        {
+                            created_at: new Date(),
+                            name: "John Doe",
+                            property: {}
+                        }
+                    );
+                    await new Promise(r => setTimeout(r, 10));
+                }
                 const result = await testDatabase.findMany(
                     "people",
+                    {},
                     {
-                        created_at: date,
-                    },
+                        maxResults: 2
+                    }
                 );
+                expect(result?.length).toBe(2);
                 expect(Array.isArray(result)).toBe(true);
                 if (result !== null) {
                     expect(result[0].property.cars).toBe(undefined);
@@ -276,6 +306,16 @@ describe(
                 if (result !== null) {
                     expect(result.length).toBeGreaterThan(0);
                 }
+            }
+        );
+
+        it(
+            "backup database",
+            async () => {
+                await insertOnePromise;
+                const backup = await testDatabase.backupDatabase();
+                expect(backup.failures).toBe(0);
+                expect(backup.successes).toBeGreaterThan(0);
             }
         );
     }

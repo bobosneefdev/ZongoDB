@@ -18,10 +18,10 @@ describe(
         it(
             "Detect optional fields on a complex schema",
             async () => {
-                const result = ZongoUtil.doesValidSchemaHaveOptionalFields(testSchema);
+                const result = ZongoUtil.verifySchemaAndCheckIfUndefinedCanExist(testSchema);
                 expect(result).toBe(true);
             }
-        )
+        );
 
         it(
             "Delete a deeply nested undefined value",
@@ -52,6 +52,6 @@ describe(
                 const billDoeAddress = result.people[1].homes?.[0];
                 expect(typeof billDoeAddress === "object" && !("address_2" in billDoeAddress)).toBe(true);
             }
-        )
+        );
     }
-)
+);

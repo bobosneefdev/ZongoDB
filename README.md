@@ -1,18 +1,35 @@
 # ZongoDB
 Zod schemas + MongoDB = <3
 
-# Important Notes
-- This package isn't meant to be bullet-proof by any means, it's a project to help me learn.
-- I have tried to keep a bit of balance of overhead/type safety.
-- I am still relatively new to coding, so brace yourself if you look at the source code 😭
+# About
+## Important notes:
+- I am always trying to improve/tweak things, breaking changes occur often.
+- I have no background in security.
+- Zod V3 is slow, this wrapper will hurt performance.
 
-# Install
+## Paths
+- Collection schemas are traversed and flattened into a map used for accessing nested schemas.
+- Here's how the traverser creates the map:
+  - Unwrap schema (get main schema within ZodOptional, ZodNullable, and ZodEffects)
+  - If the schema is a ZodObject or ZodTuple, all nested schemas will be traversed.
+  - If the schema is a ZodUnion, all possible schemas will be traversed.
+  - If a path for some reason has duplicate schemas, a ZodUnion will be created.
+- Curious about what paths are available in your instance? Just log the "flattenedSchemas" property.
+- Zongo uses this map to verify:
+  - Queried values (when using operators only existence is verified)
+  - Update values
+  - Transform function return data
+- When trying to query, update, or transform, provided paths MUST exist in the map.
+  - If it doesn't Zongo will throw an error.
+
+# Setup
+## Install
 ```cmd
 npm install @bobosneefdev/zongodb
 ```
 
-# Config
-Create and configure zongo_config.json in the root of your project. It's contents must be parsable by this Zod schema:
+## Config
+Create and configure zongo_config.json in the root of your project according to this Zod schema:
 ```ts
 // Your config file must be parsable by this Zod schema.
 z.object({
@@ -31,6 +48,15 @@ z.object({
 
 # Examples
 ```ts
+enum State {
+    CA = "CA"
+}
+
+enum CarMake {
+    VOLKSWAGEN = "Volkswagen",
+    FORD = "Ford"
+}
+
 const testDatabase = new ZongoDB(
     "ZongoTest",
     {
@@ -73,11 +99,11 @@ const testDatabase = new ZongoDB(
     }
 );
 
-// valid ✔️
+// ✔️ VALID
 await testDatabase.insertOne(
     "people",
-    {
-        created_at: date,
+    { // complete, parsable document :)
+        created_at: new Date(),
         name: "John Doe",
         property: {
             cars: [{
@@ -91,36 +117,69 @@ await testDatabase.insertOne(
     },
 );
 
-// fails to parse the document since "property" is required ❌
-await testDatabase.insertOne(
+// ❌ INVALID DATA
+await testDatabase.updateOne(
     "people",
     {
-        created_at: date,
+        created_at: new Date(),
         name: "John Doe",
     },
-);
-
-// valid ✔️
-await database.findOne(
-    "people",
     {
-        "property.crypto.btc_address": "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo",
+        // upsert requires fully parsable document ("created_at" and "name" are missing)
+        property: {
+            cars: [{
+                state_registered: State.CA,
+                license_plate: "7TJF456",
+                make: CarMake.VOLKSWAGEN,
+                model: "Passat",
+                year: 2001
+            }],
+        }
+    },
+    {
+        upsert: true
     }
 );
 
-// fails to parse since regex is not matched ❌
+// ❌ INVALID QUERY
 await database.findMany(
     "people",
     {
+        // fails regex
         "property.crypto.btc_address": "totally-not-a-real-wallet",
     }
 );
 
-// fails to parse since literal is invalid ❌
+// ❌ INVALID QUERY
 await database.deleteOne(
     "people",
     {
-        "name": "John Deer"
+        // invalid literal
+        name: "John Deer"
     }
 );
+
+// ✔️ VALID
+await database.transformOne(
+    "people",
+    {
+        name: "John Doe",
+    },
+    {
+        "property.cars": function (cars) {
+            if (!cars) {
+                cars = [];
+            }
+            cars.push({
+                state_registered: State.CA,
+                license_plate: "3LTO552",
+                make: CarMake.FORD,
+                model: "Focus RS",
+                year: 2016
+            });
+            // returned value in transform must be parsable by path at schema
+            return cars;
+        }
+    }
+)
 ```
