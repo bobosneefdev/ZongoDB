@@ -229,21 +229,19 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = document;
         delete doc._id; // so it'll parse
         const previous = this.schemas[collection].parse(doc);
-        const updt = Object.entries(update).reduce(
-            (acc, [path, transform]) => {
-                acc[path] = transform(ZongoUtil.getValueAtPath(document, path));
-                return acc;
-            },
-            {} as Record<string, any>
+        const setAndUnset = this.getSafeSetAndUnset(
+            collection,
+            Object.entries(update).reduce(
+                (acc, [path, transform]) => {
+                    acc[path] = transform(ZongoUtil.getValueAtPath(document, path));
+                    return acc;
+                },
+                {} as Record<string, any>
+            )
         );
-        const result = await this.collections[collection].updateOne(
-            {
-                "_id": docId,
-            },
-            this.getSafeSetAndUnset(collection, updt),
-        );
+        const result = await this.collections[collection].updateOne({ "_id": docId }, setAndUnset);
         return {
-            updated: updt,
+            updated: setAndUnset,
             previous: previous,
             result: result,
         } 
