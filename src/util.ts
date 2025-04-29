@@ -50,7 +50,8 @@ export class ZongoUtil {
             this.isZodNativeEnum(schema) ||
             this.isZodNaN(schema) ||
             this.isZodNumber(schema) ||
-            this.isZodString(schema)
+            this.isZodString(schema) ||
+            this.isZodAny(schema)
         ) {
             return false;
         }
@@ -150,6 +151,10 @@ export class ZongoUtil {
 
     static isZodString(schema: z.ZodTypeAny): schema is z.ZodString {
         return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodString;
+    }
+
+    static isZodAny(schema: z.ZodTypeAny): schema is z.ZodAny {
+        return schema._def.typeName === z.ZodFirstPartyTypeKind.ZodAny;
     }
 
     // recursive call, but return true
