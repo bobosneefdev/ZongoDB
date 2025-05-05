@@ -29,15 +29,15 @@ npm install @bobosneefdev/zongodb
 ```
 
 ## Config
-Create and configure zongo_config.json in the root of your project according to this Zod schema:
+Create and configure zongo_config.json or add to your .env in your cwd according to this Zod schema:
 ```ts
-// Your config file must be parsable by this Zod schema.
+// Your config file/env variables must be parsable by this Zod schema.
 z.object({
-    MONGO_URI: z.string()
+    ZONGO_MONGO_URI: z.string()
         .default("mongodb://localhost:27017"),
-    BACKUP_DIR: z.string()
+    ZONGO_BACKUP_DIR: z.string()
         .default("./ZongoDB/backups"),
-    LOG_LEVEL: z.enum([
+    ZONGO_LOG_LEVEL: z.enum([
         "error",
         "warn",
         "info",

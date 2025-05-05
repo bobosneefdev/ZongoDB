@@ -65,7 +65,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         this.schemas = schemas;
         this.flattenedSchemas = this.createSchemaPathMap(schemas);
         this.client = new mongoDB.MongoClient(
-            kZongoConfig.MONGO_URI,
+            kZongoConfig.ZONGO_MONGO_URI,
             {
                 minPoolSize: 6,
                 maxPoolSize: 10,
@@ -85,7 +85,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                 this.collectionsWithOptionalFields.add(collection as keyof T);
             }
         }
-        this.defaultBackupDir = path.join(kZongoConfig.BACKUP_DIR, name);
+        this.defaultBackupDir = path.join(kZongoConfig.ZONGO_BACKUP_DIR, name);
         ZongoLog.debug(`Constructed database "${name}"`);
         if (opts?.initIndexes) {
             const now = Date.now();
