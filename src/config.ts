@@ -24,10 +24,10 @@ function getConfig() {
         return zZongoConfig.parse(JSON.parse(fs.readFileSync(kZongoConfigFilePath, "utf-8")));
     }
     else {
-        const configFromEnv = Object.entries(zZongoConfig.shape).reduce(
-            (obj, [key, schema]) => {
-                obj[key] = schema.parse(process.env[key]);
-                return obj;
+        const configFromEnv = Object.keys(zZongoConfig.shape).reduce(
+            (p, c) => {
+                p[c] = process.env[c];
+                return p;
             },
             {} as Record<string, string | undefined>
         );
