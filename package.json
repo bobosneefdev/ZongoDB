@@ -1,6 +1,6 @@
 {
     "name": "@bobosneefdev/zongodb",
-    "version": "1.0.21",
+    "version": "1.0.22",
     "description": "Zod schemas + MongoDB",
     "main": "./dist/index.js",
     "module": "./dist/index.mjs",
@@ -13,7 +13,7 @@
     },
     "scripts": {
         "prepublishOnly": "npm run build",
-        "build": "tsup",
+        "build": "tsc && tsup",
         "test": "bun test"
     },
     "repository": {

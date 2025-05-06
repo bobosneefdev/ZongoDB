@@ -1,6 +1,6 @@
 import { kZongoConfig, ZongoConfig } from "./config";
 
-type LogLevel = ZongoConfig["LOG_LEVEL"];
+type LogLevel = ZongoConfig["ZONGO_LOG_LEVEL"];
 
 const kLogLevelHeirarchy: Record<LogLevel, number> = {
     error: 0,
@@ -27,28 +27,28 @@ export class ZongoLog {
     }
 
     static error(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.error > kLogLevelHeirarchy[kZongoConfig.LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.error > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
             return;
         }
         console.error(this.getLogTag("error"), this.convertInput(...messages));
     }
 
     static warn(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.warn > kLogLevelHeirarchy[kZongoConfig.LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.warn > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
             return;
         }
         console.warn(this.getLogTag("warn"), this.convertInput(...messages));
     }
 
     static info(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.info > kLogLevelHeirarchy[kZongoConfig.LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.info > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
             return;
         }
         console.info(this.getLogTag("info"), this.convertInput(...messages));
     }
 
     static debug(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.debug > kLogLevelHeirarchy[kZongoConfig.LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.debug > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
             return;
         }
         console.debug(this.getLogTag("debug"), this.convertInput(...messages));
