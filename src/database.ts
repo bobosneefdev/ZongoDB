@@ -4,8 +4,9 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { ZongoLog } from './logger';
-import { kZongoConfig } from './config';
 import { ZongoUtil } from './util';
+import { ZodUtil } from '@bobosneefdev/zodutil';
+import { kZongoEnv } from './env';
 
 type ZongoTransformUpdate = Record<string, (value: any) => any>;
 
@@ -65,7 +66,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         this.schemas = schemas;
         this.flattenedSchemas = this.createSchemaPathMap(schemas);
         this.client = new mongoDB.MongoClient(
-            kZongoConfig.ZONGO_MONGO_URI,
+            kZongoEnv.get("ZONGO_MONGO_URI"),
             {
                 minPoolSize: 6,
                 maxPoolSize: 10,
@@ -85,7 +86,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                 this.collectionsWithOptionalFields.add(collection as keyof T);
             }
         }
-        this.defaultBackupDir = path.join(kZongoConfig.ZONGO_BACKUP_DIR, name);
+        this.defaultBackupDir = path.join(kZongoEnv.get("ZONGO_BACKUP_DIR"), name);
         ZongoLog.debug(`Constructed database "${name}"`);
         if (opts?.initIndexes) {
             const now = Date.now();
@@ -661,7 +662,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                         result[collection][path] = schema;
                     }
                     else if (!nativeUnionPaths.has(path)) {
-                        if (ZongoUtil.isZodUnion(result[collection][path])) {
+                        if (ZodUtil.isSchemaOfType(result[collection][path], z.ZodFirstPartyTypeKind.ZodUnion)) {
                             const existingOptions = result[collection][path]._def.options;
                             result[collection][path] = z.union(([...existingOptions, schema] as any));
                         }
@@ -670,8 +671,8 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                         }
                     }
                 }
-                const unwrapped = ZongoUtil.unwrapSchema(schema);
-                if (ZongoUtil.isZodObject(unwrapped)) {
+                const unwrapped = ZodUtil.unwrapSchema(schema);
+                if (ZodUtil.isSchemaOfType(unwrapped, z.ZodFirstPartyTypeKind.ZodObject)) {
                     for (const key in unwrapped.shape) {
                         stack.push({
                             schema: unwrapped.shape[key],
@@ -679,13 +680,16 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                         });
                     }
                 }
-                else if (ZongoUtil.isZodDiscriminatedUnion(unwrapped) || ZongoUtil.isZodUnion(unwrapped)) {
+                else if (
+                    ZodUtil.isSchemaOfType(unwrapped, z.ZodFirstPartyTypeKind.ZodDiscriminatedUnion) ||
+                    ZodUtil.isSchemaOfType(unwrapped, z.ZodFirstPartyTypeKind.ZodUnion)
+                ) {
                     nativeUnionPaths.add(path);
                     for (const option of unwrapped.options) {
                         stack.push({ schema: option, path: path });
                     }
                 }
-                else if (ZongoUtil.isZodTuple(unwrapped)) {
+                else if (ZodUtil.isSchemaOfType(unwrapped, z.ZodFirstPartyTypeKind.ZodTuple)) {
                     for (let i = 0; i < unwrapped._def.items.length; i++) {
                         stack.push({
                             schema: unwrapped._def.items[i],

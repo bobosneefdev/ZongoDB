@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ZongoDB } from "../src/database";
 import { ZongoUtil } from "../src/util";
+import { ZodUtil } from "@bobosneefdev/zodutil";
 
 enum State {
     CA = "CA",
@@ -85,9 +86,10 @@ const testDatabase = new ZongoDB(
         }
     }
 );
+
 for (const [collection, pathSchemas] of Object.entries(testDatabase.flattenedSchemas)) {
     for (const [path, schema] of Object.entries(pathSchemas)) {
-        if (ZongoUtil.isZodUnion(schema)) {
+        if (ZodUtil.isSchemaOfType(schema, z.ZodFirstPartyTypeKind.ZodUnion)) {
             console.log(`${collection}: ${path} - ${schema._def.options.map(o => o._def.typeName).join(", ")}`);
         }
         else {

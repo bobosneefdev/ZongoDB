@@ -1,8 +1,7 @@
-import { kZongoConfig, ZongoConfig } from "./config";
+import { kZongoEnv } from "./env";
+import { ZongoLogLevel } from "./types";
 
-type LogLevel = ZongoConfig["ZONGO_LOG_LEVEL"];
-
-const kLogLevelHeirarchy: Record<LogLevel, number> = {
+const kLogLevelHeirarchy: Record<ZongoLogLevel, number> = {
     error: 0,
     warn: 1,
     info: 2,
@@ -10,7 +9,9 @@ const kLogLevelHeirarchy: Record<LogLevel, number> = {
 };
 
 export class ZongoLog {
-    private static getLogTag(logLevel: LogLevel) {
+    static longestLogLevel = Object.values(ZongoLogLevel).reduce((p, c) => Math.max(p, c.length), 0);
+
+    private static getLogTag(logLevel: ZongoLogLevel) {
         const simpleDateStr = new Date().toLocaleTimeString(
             "en-US",
             {
@@ -19,7 +20,7 @@ export class ZongoLog {
                 second: "2-digit",
             }
         );
-        return `[zongo ${logLevel} | ${simpleDateStr}]`;
+        return `[zongo ${logLevel.padEnd(ZongoLog.longestLogLevel)} | ${simpleDateStr}]`;
     }
 
     private static convertInput(...messages: unknown[]): string[] {
@@ -27,30 +28,30 @@ export class ZongoLog {
     }
 
     static error(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.error > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.error > kLogLevelHeirarchy[kZongoEnv.get("ZONGO_LOG_LEVEL")]) {
             return;
         }
-        console.error(this.getLogTag("error"), this.convertInput(...messages));
+        console.error(this.getLogTag(ZongoLogLevel.ERROR), this.convertInput(...messages));
     }
 
     static warn(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.warn > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.warn > kLogLevelHeirarchy[kZongoEnv.get("ZONGO_LOG_LEVEL")]) {
             return;
         }
-        console.warn(this.getLogTag("warn"), this.convertInput(...messages));
+        console.warn(this.getLogTag(ZongoLogLevel.WARN), this.convertInput(...messages));
     }
 
     static info(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.info > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.info > kLogLevelHeirarchy[kZongoEnv.get("ZONGO_LOG_LEVEL")]) {
             return;
         }
-        console.info(this.getLogTag("info"), this.convertInput(...messages));
+        console.info(this.getLogTag(ZongoLogLevel.INFO), this.convertInput(...messages));
     }
 
     static debug(...messages: unknown[]): void {
-        if (kLogLevelHeirarchy.debug > kLogLevelHeirarchy[kZongoConfig.ZONGO_LOG_LEVEL]) {
+        if (kLogLevelHeirarchy.debug > kLogLevelHeirarchy[kZongoEnv.get("ZONGO_LOG_LEVEL")]) {
             return;
         }
-        console.debug(this.getLogTag("debug"), this.convertInput(...messages));
+        console.debug(this.getLogTag(ZongoLogLevel.DEBUG), this.convertInput(...messages));
     }
 }
