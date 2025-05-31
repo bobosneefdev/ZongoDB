@@ -123,7 +123,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         opts?: mongoDB.InsertOneOptions
     ) {
         return await this.collections[collection].insertOne(
-            this.removeUndefinedValuesAndParse(collection, doc),
+            await this.removeUndefinedValuesAndParse(collection, doc),
             opts
         );
     }
@@ -134,18 +134,18 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         opts?: mongoDB.BulkWriteOptions
     ) {
         return await this.collections[collection].insertMany(
-            docs.map(doc => this.removeUndefinedValuesAndParse(collection, doc)),
+            await Promise.all(docs.map(async (doc) => this.removeUndefinedValuesAndParse(collection, doc))),
             opts
         );
     }
 
-    private removeUndefinedValuesAndParse<K extends keyof T & string>(
+    private async removeUndefinedValuesAndParse<K extends keyof T & string>(
         collection: K,
         doc: z.infer<T[K]>
     ) {
         return this.collectionsWithOptionalFields.has(collection) ?
-            ZongoUtil.removeExplicitUndefined(this.schemas[collection].parse(doc)) :
-            this.schemas[collection].parse(doc);
+            ZongoUtil.removeExplicitUndefined(await this.schemas[collection].parseAsync(doc)) :
+            await this.schemas[collection].parseAsync(doc);
     }
 
     /**
@@ -160,8 +160,8 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         query: Record<string, any>,
         update: ZongoTransformUpdate,
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
-        this.verifyQuery(collection, query);
-        const document = await this.collections[collection].findOne(query);
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        const document = await this.collections[collection].findOne(verifiedQuery);
         if (!document) {
             return null;
         }
@@ -194,14 +194,15 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             ZongoTransformDetailedReturn<T[K]> :
             ZongoTransformStandardReturn
     > {
-        this.verifyQuery(collection, query);
         const detailedResult = [];
         const standardResult = {
             notAcknowledgedCount: 0,
             matchedCount: 0,
             modifiedCount: 0,
         };
-        for await (const document of this.collections[collection].find(query)) {
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        const cursor = this.collections[collection].find(verifiedQuery);
+        for await (const document of cursor) {
             const result = await this.transform(collection, document, update);
             if (opts?.detailed === true) {
                 detailedResult.push(result);
@@ -229,7 +230,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         const docId = document._id;
         const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = document;
         delete doc._id; // so it'll parse
-        const previous = this.schemas[collection].parse(doc);
+        const previous = await this.schemas[collection].parseAsync(doc);
         const setAndUnset = this.getSafeSetAndUnset(
             collection,
             Object.entries(update).reduce(
@@ -309,20 +310,25 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             upsert?: boolean;
         }
     ) {
-        this.verifyQuery(collection, query);
-        for (const path in update) {
-            this.getSchemaAtPath(collection, path).parse(update[path]);
-            this.addPathParentsToQuery(path, query);
-        }
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        let parsedUpdate: Record<string, any>;
         if (opts?.upsert === true) {
-            const parsed = this.schemas[collection].safeParse(update);
+            const parsed = await this.schemas[collection].safeParseAsync(update);
             if (!parsed.success) {
                 throw new Error(`Upsert only possible with complete document. ${parsed.error}`);
             }
+            parsedUpdate = parsed.data;
+        }
+        else {
+            parsedUpdate = {};
+            for (const path in update) {
+                parsedUpdate[path] = await this.getSchemaAtPath(collection, path).parseAsync(update[path]);
+                this.addPathParentsToQuery(path, query);
+            }
         }
         return await this.collections[collection][type](
-            query,
-            this.getSafeSetAndUnset(collection, update),
+            verifiedQuery,
+            this.getSafeSetAndUnset(collection, parsedUpdate),
             opts
         );
     }
@@ -339,7 +345,8 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         query: Record<string, any>,
         opts?: mongoDB.DeleteOptions
     ) {
-        return await this.delete(collection, query, "deleteOne", opts);
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        return await this.delete(collection, verifiedQuery, "deleteOne", opts);
     }
 
     /**
@@ -354,7 +361,8 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         query: Record<string, any>,
         opts?: mongoDB.DeleteOptions
     ) {
-        return await this.delete(collection, query, "deleteMany", opts);
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        return await this.delete(collection, verifiedQuery, "deleteMany", opts);
     }
 
     private async delete<K extends keyof T & string>(
@@ -363,7 +371,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         type: "deleteOne" | "deleteMany",
         opts?: mongoDB.DeleteOptions
     ) {
-        this.verifyQuery(collection, query);
+        this.getVerifiedQuery(collection, query);
         return await this.collections[collection][type](query, opts);
     }
 
@@ -380,16 +388,16 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         query: Record<string, any>,
         options?: mongoDB.FindOptions<z.infer<T[K]>>
     ): Promise<z.infer<AddObjectIdToObject<T[K]>> | null> {
-        this.verifyQuery(collection, query);
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
         const result = await this.collections[collection].findOne(
-            query,
+            verifiedQuery,
             options,
         );
         if (!result) {
             ZongoLog.debug(`No document found for query: ${JSON.stringify(query)}`);
             return null;
         }
-        return this.getSchemaWithObjectId(collection).parse(result);
+        return await this.getSchemaWithObjectId(collection).parseAsync(result);
     }
 
     /**
@@ -406,11 +414,11 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             maxResults?: number;
         }
     ): Promise<Array<z.infer<AddObjectIdToObject<T[K]>>> | null> {
-        this.verifyQuery(collection, query);
-        const cursor = this.collections[collection].find(query, options);
+        const verifiedQuery = await this.getVerifiedQuery(collection, query);
+        const cursor = this.collections[collection].find(verifiedQuery, options);
         const docArray: Array<z.infer<AddObjectIdToObject<T[K]>>> = [];
         for await (const document of cursor) {
-            docArray.push(this.getSchemaWithObjectId(collection).parse(document));
+            docArray.push(await this.getSchemaWithObjectId(collection).parseAsync(document));
             if (options?.maxResults && docArray.length >= options.maxResults) {
                 break;
             }
@@ -419,8 +427,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             ZongoLog.debug(`No documents found for query: ${JSON.stringify(query)}`);
             return null;
         }
-        const schemaWithId = this.getSchemaWithObjectId(collection);
-        return docArray.map(d => schemaWithId.parse(d));
+        return docArray;
     }
 
     /**
@@ -436,7 +443,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         options?: mongoDB.CreateIndexesOptions,
     ) {
         for (const key in index) {
-            if (!this.flattenedSchemas[collection][key]) {
+            if (!(key in this.flattenedSchemas[collection])) {
                 throw new Error(`Invalid index path "${key}" in collection ${collection}`);
             }
         }
@@ -604,20 +611,25 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         }) as any;
     }
 
-    private verifyQuery<K extends keyof T & string>(
+    private async getVerifiedQuery<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>
     ) {
-        for (const path in query) {
+        const verifiedQuery: Record<string, any> = {};
+        for (const [path, value] of Object.entries(query)) {
             const schema = this.getSchemaAtPath(collection, path);
-            if (query[path] === null || typeof query[path] !== "object") {
-                schema.parse(query[path]);
+            if (value === null || value instanceof Date || typeof value !== "object") {
+                verifiedQuery[path] = await schema.parseAsync(value);
             }
-            else if (!this.warningMessagesSent["queryObjectValidationWarning"]) {
-                ZongoLog.warn(`ZongoDB does not currently verify query objects with mongoDB methods, but they will still work.`);
-                this.warningMessagesSent["queryObjectValidationWarning"] = 1;
+            else {
+                if (!this.warningMessagesSent["queryObjectValidationWarning"]) {
+                    ZongoLog.warn(`ZongoDB does not currently verify query objects with mongoDB methods, but they will still work.`);
+                    this.warningMessagesSent["queryObjectValidationWarning"] = 1;
+                }
+                verifiedQuery[path] = value;
             }
         }
+        return verifiedQuery;
     }
 
     private getSafeSetAndUnset<K extends keyof T & string>(

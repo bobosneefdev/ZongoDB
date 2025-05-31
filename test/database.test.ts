@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { ZongoDB } from "../src/database";
-import { ZongoUtil } from "../src/util";
 import { ZodUtil } from "@bobosneefdev/zodutil";
 
 enum State {
@@ -172,6 +171,7 @@ describe(
                         detailed: true
                     }
                 );
+                console.log(result);
                 expect(result.modifiedCount).toBeGreaterThan(0);
                 transformManyResolve();
             }
