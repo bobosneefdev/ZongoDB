@@ -9,13 +9,25 @@ export class ZongoUtil {
         for (let i = 0; i < keys.length; i++) {
             if (
                 current === null ||
-                typeof current !== "object" ||
-                Array.isArray(current) ||
+                (typeof current !== "object") ||
                 current instanceof Date
             ) {
                 throw new Error(`Invalid object at path: ${pathStr(i)}`);
             }
-            current = current[keys[i]];
+            // Handle array access by index
+            if (Array.isArray(current) && !isNaN(Number(keys[i]))) {
+                current = current[Number(keys[i])];
+            } else if (Array.isArray(current)) {
+                // If we're trying to access a property on an array (not by index), 
+                // this is likely the final step where we want to return the array itself
+                // for operations like push/pop
+                if (i === keys.length - 1) {
+                    return current;
+                }
+                throw new Error(`Cannot access property "${keys[i]}" on array at path: ${pathStr(i)}`);
+            } else {
+                current = current[keys[i]];
+            }
         }
         return current;
     }

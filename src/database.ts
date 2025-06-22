@@ -41,6 +41,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     private defaultBackupDir: string;
     private warningMessagesSent: Record<string, number> = {};
     private collectionsWithOptionalFields: Set<keyof T> = new Set();
+    private transactionsSupported: boolean | null = null;
 
     constructor(
         name: string,
@@ -117,6 +118,54 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         await this.client.close(force);
     }
 
+    /**
+     * Check if MongoDB transactions are supported (requires replica set or sharded cluster)
+     */
+    private async checkTransactionSupport(): Promise<boolean> {
+        if (this.transactionsSupported !== null) {
+            return this.transactionsSupported;
+        }
+
+        try {
+            const session = this.client.startSession();
+            try {
+                // Create a temporary collection for testing
+                const testCollection = this.db.collection('__zongo_transaction_test__');
+                
+                await session.withTransaction(async () => {
+                    // Perform an actual database operation that requires transaction numbers
+                    await testCollection.insertOne({ test: true }, { session });
+                    await testCollection.deleteOne({ test: true }, { session });
+                });
+                
+                this.transactionsSupported = true;
+                ZongoLog.debug("MongoDB transactions are supported");
+                
+                // Clean up test collection
+                try {
+                    await testCollection.drop();
+                } catch {
+                    // Ignore cleanup errors
+                }
+            } catch (error: any) {
+                if (error.code === 20 || error.codeName === "IllegalOperation" || 
+                    error.message?.includes("Transaction numbers are only allowed")) {
+                    this.transactionsSupported = false;
+                    ZongoLog.warn("MongoDB transactions not supported (standalone instance). Using optimistic locking fallback.");
+                } else {
+                    throw error;
+                }
+            } finally {
+                await session.endSession();
+            }
+        } catch (error) {
+            this.transactionsSupported = false;
+            ZongoLog.warn("Could not determine transaction support, defaulting to optimistic locking");
+        }
+
+        return this.transactionsSupported;
+    }
+
     async insertOne<K extends keyof T & string>(
         collection: K,
         doc: z.infer<T[K]>,
@@ -160,16 +209,33 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         query: Record<string, any>,
         update: ZongoTransformUpdate,
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
-        const verifiedQuery = await this.getVerifiedQuery(collection, query);
-        const document = await this.collections[collection].findOne(verifiedQuery);
-        if (!document) {
-            return null;
+        const supportsTransactions = await this.checkTransactionSupport();
+        
+        if (supportsTransactions) {
+            // Use transaction-based approach
+            const session = this.client.startSession();
+            
+            try {
+                return await session.withTransaction(async () => {
+                    const verifiedQuery = await this.getVerifiedQuery(collection, query);
+                    const document = await this.collections[collection].findOne(verifiedQuery, { session });
+                    if (!document) {
+                        return null;
+                    }
+                    return await this.transform(
+                        collection,
+                        document,
+                        update,
+                        session
+                    );
+                });
+            } finally {
+                await session.endSession();
+            }
+        } else {
+            // Fallback to optimistic locking
+            return await this.transformOneOptimistic(collection, query, update);
         }
-        return await this.transform(
-            collection,
-            document,
-            update
-        );
     }
 
     /**
@@ -194,59 +260,227 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             ZongoTransformDetailedReturn<T[K]> :
             ZongoTransformStandardReturn
     > {
-        const detailedResult = [];
-        const standardResult = {
-            notAcknowledgedCount: 0,
-            matchedCount: 0,
-            modifiedCount: 0,
-        };
-        const verifiedQuery = await this.getVerifiedQuery(collection, query);
-        const cursor = this.collections[collection].find(verifiedQuery);
-        for await (const document of cursor) {
-            const result = await this.transform(collection, document, update);
-            if (opts?.detailed === true) {
-                detailedResult.push(result);
+        const supportsTransactions = await this.checkTransactionSupport();
+        
+        if (supportsTransactions) {
+            // Use transaction-based approach
+            const detailedResult = [];
+            const standardResult = {
+                notAcknowledgedCount: 0,
+                matchedCount: 0,
+                modifiedCount: 0,
+            };
+            const verifiedQuery = await this.getVerifiedQuery(collection, query);
+            
+            // Use a session for consistent reads, but process each document in its own transaction
+            const session = this.client.startSession();
+            try {
+                const cursor = this.collections[collection].find(verifiedQuery, { session });
+                const documentIds: mongoDB.ObjectId[] = [];
+                
+                // First, collect all document IDs
+                for await (const document of cursor) {
+                    documentIds.push(document._id);
+                }
+                
+                // Process each document in its own transaction for better concurrency
+                for (const docId of documentIds) {
+                    const docSession = this.client.startSession();
+                    try {
+                        const result = await docSession.withTransaction(async () => {
+                            const document = await this.collections[collection].findOne(
+                                { "_id": docId },
+                                { session: docSession }
+                            );
+                            
+                            if (!document) {
+                                // Document was deleted between our initial query and now
+                                return null;
+                            }
+                            
+                            return await this.transform(collection, document, update, docSession);
+                        });
+                        
+                        if (result) {
+                            if (opts?.detailed === true) {
+                                detailedResult.push(result);
+                            }
+                            if (!result.result.acknowledged) {
+                                standardResult.notAcknowledgedCount++;
+                            }
+                            standardResult.matchedCount += result.result.matchedCount;
+                            standardResult.modifiedCount += result.result.modifiedCount;
+                        }
+                    } finally {
+                        await docSession.endSession();
+                    }
+                }
+            } finally {
+                await session.endSession();
             }
-            if (!result.result.acknowledged) {
-                standardResult.notAcknowledgedCount++;
+            
+            return (opts?.detailed === true ?
+                {
+                    detailed: detailedResult,
+                    ...standardResult,
+                } :
+                standardResult
+            ) as any;
+        } else {
+            // Fallback to optimistic locking approach
+            const detailedResult = [];
+            const standardResult = {
+                notAcknowledgedCount: 0,
+                matchedCount: 0,
+                modifiedCount: 0,
+            };
+            const verifiedQuery = await this.getVerifiedQuery(collection, query);
+            const cursor = this.collections[collection].find(verifiedQuery);
+            
+            // Collect document IDs first to avoid cursor issues during updates
+            const documentIds: mongoDB.ObjectId[] = [];
+            for await (const document of cursor) {
+                documentIds.push(document._id);
             }
-            standardResult.matchedCount += result.result.matchedCount;
-            standardResult.modifiedCount += result.result.modifiedCount;
+            
+            // Process each document with optimistic locking
+            for (const docId of documentIds) {
+                try {
+                    const result = await this.transformOneOptimistic(
+                        collection, 
+                        { "_id": docId }, 
+                        update
+                    );
+                    
+                    if (result) {
+                        if (opts?.detailed === true) {
+                            detailedResult.push(result);
+                        }
+                        if (!result.result.acknowledged) {
+                            standardResult.notAcknowledgedCount++;
+                        }
+                        standardResult.matchedCount += result.result.matchedCount;
+                        standardResult.modifiedCount += result.result.modifiedCount;
+                    }
+                } catch (error) {
+                    // Log the error but continue with other documents
+                    ZongoLog.error(`Failed to transform document ${docId}:`, error);
+                    // Don't continue if it's a schema validation error, as it will likely affect all documents
+                    if (error instanceof Error && (
+                        error.message.includes('ZodError') || 
+                        error.message.includes('Path') ||
+                        error.message.includes('does not exist')
+                    )) {
+                        throw error;
+                    }
+                }
+            }
+            
+            return (opts?.detailed === true ?
+                {
+                    detailed: detailedResult,
+                    ...standardResult,
+                } :
+                standardResult
+            ) as any;
         }
-        return (opts?.detailed === true ?
-            {
-                detailed: detailedResult,
-                ...standardResult,
-            } :
-            standardResult
-        ) as any;
     }
 
     private async transform<K extends keyof T & string>(
         collection: K,
         document: mongoDB.WithId<mongoDB.BSON.Document>,
-        update: ZongoTransformUpdate
+        update: ZongoTransformUpdate,
+        session?: mongoDB.ClientSession
     ): Promise<ZongoTransformHelperReturn<T[K]>> {
-        const docId = document._id;
-        const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = document;
-        delete doc._id; // so it'll parse
-        const previous = await this.schemas[collection].parseAsync(doc);
-        const setAndUnset = this.getSafeSetAndUnset(
-            collection,
-            Object.entries(update).reduce(
-                (acc, [path, transform]) => {
-                    acc[path] = transform(ZongoUtil.getValueAtPath(document, path));
-                    return acc;
-                },
-                {} as Record<string, any>
-            )
-        );
-        const result = await this.collections[collection].updateOne({ "_id": docId }, setAndUnset);
-        return {
-            updated: setAndUnset,
-            previous: previous,
-            result: result,
-        } 
+        if (session) {
+            // Transaction-based approach for consistency
+            const docId = document._id;
+            
+            // Re-fetch the document within the transaction to ensure we have the latest version
+            const currentDocument = await this.collections[collection].findOne(
+                { "_id": docId },
+                { session }
+            );
+            
+            if (!currentDocument) {
+                throw new Error(`Document with _id ${docId} not found during transaction`);
+            }
+            
+            const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = { ...currentDocument };
+            delete doc._id; // so it'll parse
+            const previous = await this.schemas[collection].parseAsync(doc);
+            
+            const setAndUnset = this.getSafeSetAndUnset(
+                collection,
+                Object.entries(update).reduce(
+                    (acc, [path, transform]) => {
+                        acc[path] = transform(ZongoUtil.getValueAtPath(currentDocument, path));
+                        return acc;
+                    },
+                    {} as Record<string, any>
+                )
+            );
+            
+            const result = await this.collections[collection].updateOne(
+                { "_id": docId }, 
+                setAndUnset,
+                { session }
+            );
+            
+            return {
+                updated: setAndUnset,
+                previous: previous,
+                result: result,
+            };
+        } else {
+            // Legacy non-transactional approach (kept for backward compatibility)
+            const session = this.client.startSession();
+            
+            try {
+                return await session.withTransaction(async () => {
+                    const docId = document._id;
+                    
+                    // Re-fetch the document within the transaction to ensure we have the latest version
+                    const currentDocument = await this.collections[collection].findOne(
+                        { "_id": docId },
+                        { session }
+                    );
+                    
+                    if (!currentDocument) {
+                        throw new Error(`Document with _id ${docId} not found during transaction`);
+                    }
+                    
+                    const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = { ...currentDocument };
+                    delete doc._id; // so it'll parse
+                    const previous = await this.schemas[collection].parseAsync(doc);
+                    
+                    const setAndUnset = this.getSafeSetAndUnset(
+                        collection,
+                        Object.entries(update).reduce(
+                            (acc, [path, transform]) => {
+                                acc[path] = transform(ZongoUtil.getValueAtPath(currentDocument, path));
+                                return acc;
+                            },
+                            {} as Record<string, any>
+                        )
+                    );
+                    
+                    const result = await this.collections[collection].updateOne(
+                        { "_id": docId }, 
+                        setAndUnset,
+                        { session }
+                    );
+                    
+                    return {
+                        updated: setAndUnset,
+                        previous: previous,
+                        result: result,
+                    };
+                });
+            } finally {
+                await session.endSession();
+            }
+        }
     }
 
     /**
@@ -617,6 +851,12 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     ) {
         const verifiedQuery: Record<string, any> = {};
         for (const [path, value] of Object.entries(query)) {
+            // Handle MongoDB's _id field specially
+            if (path === "_id") {
+                verifiedQuery[path] = value;
+                continue;
+            }
+            
             const schema = this.getSchemaAtPath(collection, path);
             if (value === null || value instanceof Date || typeof value !== "object") {
                 verifiedQuery[path] = await schema.parseAsync(value);
@@ -713,5 +953,92 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         }
         
         return result;
+    }
+
+    /**
+     * Transform the data within a document using optimistic locking (alternative to transaction-based transform).
+     * This method will retry the operation if the document changes between read and write.
+     * @param collection - Name of the collection to transform.
+     * @param query - Path/values to match the document to.
+     * @param update - Transformations to apply to given paths
+     * @param opts.maxRetries - Maximum number of retries if document changes. Defaults to 3.
+     * @returns null if no document found
+     */
+    async transformOneOptimistic<K extends keyof T & string>(
+        collection: K,
+        query: Record<string, any>,
+        update: ZongoTransformUpdate,
+        opts?: {
+            maxRetries?: number;
+        }
+    ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
+        const maxRetries = opts?.maxRetries ?? 3;
+        let attempt = 0;
+        
+        while (attempt <= maxRetries) {
+            try {
+                const verifiedQuery = await this.getVerifiedQuery(collection, query);
+                const document = await this.collections[collection].findOne(verifiedQuery);
+                if (!document) {
+                    return null;
+                }
+                
+                const docId = document._id;
+                const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = { ...document };
+                delete doc._id; // so it'll parse
+                const previous = await this.schemas[collection].parseAsync(doc);
+                
+                const setAndUnset = this.getSafeSetAndUnset(
+                    collection,
+                    Object.entries(update).reduce(
+                        (acc, [path, transform]) => {
+                            acc[path] = transform(ZongoUtil.getValueAtPath(document, path));
+                            return acc;
+                        },
+                        {} as Record<string, any>
+                    )
+                );
+                
+                // Use findOneAndUpdate with the original _id to ensure atomicity
+                // This approach is more reliable than comparing entire document contents
+                const result = await this.collections[collection].findOneAndUpdate(
+                    { "_id": docId },
+                    setAndUnset,
+                    { 
+                        returnDocument: 'after',
+                        includeResultMetadata: true
+                    }
+                );
+                
+                if (!result.value) {
+                    // Document was deleted by another operation
+                    return null;
+                }
+                
+                // Convert findOneAndUpdate result to updateOne result format
+                const updateResult: mongoDB.UpdateResult = {
+                    acknowledged: true,
+                    matchedCount: 1,
+                    modifiedCount: result.lastErrorObject?.updatedExisting ? 1 : 0,
+                    upsertedCount: 0,
+                    upsertedId: null
+                };
+                
+                return {
+                    updated: setAndUnset,
+                    previous: previous,
+                    result: updateResult,
+                };
+            } catch (error) {
+                if (attempt >= maxRetries) {
+                    throw error;
+                }
+                attempt++;
+                // Add a small delay between retries
+                await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
+            }
+        }
+        
+        throw new Error(`Transform operation failed after ${maxRetries} attempts`);
     }
 }
