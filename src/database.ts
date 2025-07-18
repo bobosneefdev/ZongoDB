@@ -47,6 +47,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         name: string,
         schemas: T,
         opts?: {
+            mongoUri?: string;
             mongoClientOpts?: mongoDB.MongoClientOptions;
             mongoDbOpts?: mongoDB.DbOptions;
             initIndexes?: Partial<Record<
@@ -67,7 +68,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         this.schemas = schemas;
         this.flattenedSchemas = this.createSchemaPathMap(schemas);
         this.client = new mongoDB.MongoClient(
-            kZongoEnv.get("ZONGO_MONGO_URI"),
+            opts?.mongoUri ?? "mongodb://localhost:27017",
             {
                 minPoolSize: 6,
                 maxPoolSize: 10,
