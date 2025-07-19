@@ -155,18 +155,21 @@ describe(
                     {
                         "created_at": date,
                     },
-                    {
-                        "property.cars": (d) => {
-                            d.push({
-                                state_registered: State.CA,
-                                license_plate: "8RJK860",
-                                make: CarMake.TOYOTA,
-                                model: "Land Cruiser",
-                                year: 2025
-                            });
-                            return d;
+                    [
+                        {
+                            path: "property.cars",
+                            transform: (d: Array<any>) => {
+                                d.push({
+                                    state_registered: State.CA,
+                                    license_plate: "8RJK860",
+                                    make: CarMake.TOYOTA,
+                                    model: "Land Cruiser",
+                                    year: 2025
+                                });
+                                return d;
+                            },
                         },
-                    },
+                    ],
                     {
                         detailed: true
                     }
@@ -188,19 +191,22 @@ describe(
                     {
                         "created_at": date,
                     },
-                    {
-                        "property.cars": (d) => {
-                            d.push({
-                                state_registered: State.CA,
-                                license_plate: "3EBK823",
-                                make: CarMake.HONDA,
-                                model: "Accord CrossTour",
-                                year: 2014,
-                                invalid: "test"
-                            });
-                            return d;
-                        }
-                    }
+                    [
+                        {
+                            path: "property.cars",
+                            transform: (d: Array<any>) => {
+                                d.push({
+                                    state_registered: State.CA,
+                                    license_plate: "3EBK823",
+                                    make: CarMake.HONDA,
+                                    model: "Accord CrossTour",
+                                    year: 2014,
+                                    invalid: "test"
+                                });
+                                return d;
+                            }
+                        },
+                    ]
                 );
                 expect(result?.result.modifiedCount ?? 0).toBeGreaterThan(0);
                 transformOneResolve();

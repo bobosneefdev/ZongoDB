@@ -8,7 +8,10 @@ import { ZongoUtil } from './util';
 import { ZodUtil } from '@bobosneefdev/zodutil';
 import { kZongoEnv } from './env';
 
-type ZongoTransformUpdate = Record<string, (value: any) => any>;
+type ZongoTransformation = {
+    path?: string;
+    transform: (value: any) => any;
+};
 
 type ZongoTransformHelperReturn<T extends z.ZodTypeAny> = {
     previous: z.infer<T>;
@@ -208,7 +211,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     async transformOne<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
-        update: ZongoTransformUpdate,
+        transformations: Array<ZongoTransformation>,
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
         const supportsTransactions = await this.checkTransactionSupport();
         
@@ -226,7 +229,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                     return await this.transform(
                         collection,
                         document,
-                        update,
+                        transformations,
                         session
                     );
                 });
@@ -235,7 +238,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             }
         } else {
             // Fallback to optimistic locking
-            return await this.transformOneOptimistic(collection, query, update);
+            return await this.transformOneOptimistic(collection, query, transformations);
         }
     }
 
@@ -254,7 +257,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     >(
         collection: K,
         query: Record<string, any>,
-        update: ZongoTransformUpdate,
+        transformations: Array<ZongoTransformation>,
         opts?: O,
     ): Promise<
         O["detailed"] extends true ?
@@ -299,7 +302,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                                 return null;
                             }
                             
-                            return await this.transform(collection, document, update, docSession);
+                            return await this.transform(collection, document, transformations, docSession);
                         });
                         
                         if (result) {
@@ -350,7 +353,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                     const result = await this.transformOneOptimistic(
                         collection, 
                         { "_id": docId }, 
-                        update
+                        transformations
                     );
                     
                     if (result) {
@@ -390,7 +393,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
     private async transform<K extends keyof T & string>(
         collection: K,
         document: mongoDB.WithId<mongoDB.BSON.Document>,
-        update: ZongoTransformUpdate,
+        transformations: Array<ZongoTransformation>,
         session?: mongoDB.ClientSession
     ): Promise<ZongoTransformHelperReturn<T[K]>> {
         if (session) {
@@ -413,10 +416,13 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             
             const setAndUnset = this.getSafeSetAndUnset(
                 collection,
-                Object.entries(update).reduce(
-                    (acc, [path, transform]) => {
-                        acc[path] = transform(ZongoUtil.getValueAtPath(currentDocument, path));
-                        return acc;
+                transformations.reduce(
+                    (doc, transformation) => {
+                        if (transformation.path === undefined) {
+                            return transformation.transform(doc);
+                        }
+                        doc[transformation.path] = transformation.transform(ZongoUtil.getValueAtPath(currentDocument, transformation.path));
+                        return doc;
                     },
                     {} as Record<string, any>
                 )
@@ -457,10 +463,13 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                     
                     const setAndUnset = this.getSafeSetAndUnset(
                         collection,
-                        Object.entries(update).reduce(
-                            (acc, [path, transform]) => {
-                                acc[path] = transform(ZongoUtil.getValueAtPath(currentDocument, path));
-                                return acc;
+                        transformations.reduce(
+                            (doc, transformation) => {
+                                if (transformation.path === undefined) {
+                                    return transformation.transform(doc);
+                                }
+                                doc[transformation.path] = transformation.transform(ZongoUtil.getValueAtPath(currentDocument, transformation.path));
+                                return doc;
                             },
                             {} as Record<string, any>
                         )
@@ -961,14 +970,14 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
      * This method will retry the operation if the document changes between read and write.
      * @param collection - Name of the collection to transform.
      * @param query - Path/values to match the document to.
-     * @param update - Transformations to apply to given paths
+     * @param transformations - Transformations to apply to given paths
      * @param opts.maxRetries - Maximum number of retries if document changes. Defaults to 3.
      * @returns null if no document found
      */
     async transformOneOptimistic<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
-        update: ZongoTransformUpdate,
+        transformations: Array<ZongoTransformation>,
         opts?: {
             maxRetries?: number;
         }
@@ -991,9 +1000,14 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                 
                 const setAndUnset = this.getSafeSetAndUnset(
                     collection,
-                    Object.entries(update).reduce(
-                        (acc, [path, transform]) => {
-                            acc[path] = transform(ZongoUtil.getValueAtPath(document, path));
+                    transformations.reduce(
+                        (acc, transformation) => {
+                            if (transformation.path === undefined) {
+                                acc = transformation.transform(acc);
+                            }
+                            else {
+                                acc[transformation.path] = transformation.transform(ZongoUtil.getValueAtPath(document, transformation.path));
+                            }
                             return acc;
                         },
                         {} as Record<string, any>
