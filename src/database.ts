@@ -154,7 +154,10 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         collection: K,
         query: Record<string, any>,
         transformation: ZongoTransformation<T[K]>,
-        opts?: { maxRetries?: number }
+        opts?: {
+            maxRetries?: number,
+            nonAtomic?: true
+        }
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
         return await this.transform(collection, query, transformation, opts);
     }
@@ -172,6 +175,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         O extends {
             detailed?: boolean;
             maxRetries?: number;
+            nonAtomic?: true;
         }
     >(
         collection: K,
@@ -205,7 +209,10 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                     collection, 
                     { "_id": docId }, 
                     transformation,
-                    { maxRetries: opts?.maxRetries }
+                    {
+                        maxRetries: opts?.maxRetries,
+                        nonAtomic: opts?.nonAtomic
+                    }
                 );
                 
                 if (result) {
