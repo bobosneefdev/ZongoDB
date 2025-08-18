@@ -315,5 +315,79 @@ describe(
                 expect(backup.successes).toBeGreaterThan(0);
             }
         );
+
+        it(
+            "atomic transform - should handle concurrent modifications",
+            async () => {
+                await insertOnePromise;
+                
+                // Create a test document for atomic testing
+                const atomicTestDate = new Date();
+                await testDatabase.insertOne(
+                    "people",
+                    {
+                        created_at: atomicTestDate,
+                        name: "John Doe",
+                        property: {
+                            cars: [{
+                                state_registered: State.CA,
+                                license_plate: "ATOMIC1",
+                                make: CarMake.HONDA,
+                                model: "Civic",
+                                year: 2020
+                            }],
+                        }
+                    }
+                );
+
+                // Test 1: Normal atomic operation should succeed
+                const result1 = await testDatabase.transformOne(
+                    "people",
+                    { "created_at": atomicTestDate },
+                    (doc) => {
+                        doc.property.cars?.push({
+                            state_registered: State.NY,
+                            license_plate: "ATOMIC2",
+                            make: CarMake.TOYOTA,
+                            model: "Prius",
+                            year: 2021
+                        });
+                        return doc;
+                    }
+                );
+                expect(result1?.result.modifiedCount).toBe(1);
+
+                // Test 2: Verify the document was actually modified
+                const verifyDoc = await testDatabase.findOne(
+                    "people",
+                    { "created_at": atomicTestDate }
+                );
+                expect(verifyDoc?.property.cars?.length).toBe(2);
+                
+                // Test 3: Test retry mechanism with maxRetries option
+                const result2 = await testDatabase.transformOne(
+                    "people",
+                    { "created_at": atomicTestDate },
+                    (doc) => {
+                        doc.property.cars?.push({
+                            state_registered: State.TX,
+                            license_plate: "ATOMIC3",
+                            make: CarMake.FORD,
+                            model: "F-150",
+                            year: 2022
+                        });
+                        return doc;
+                    },
+                    { maxRetries: 5 } // Test the maxRetries option
+                );
+                expect(result2?.result.modifiedCount).toBe(1);
+
+                // Clean up test document
+                await testDatabase.deleteOne(
+                    "people",
+                    { "created_at": atomicTestDate }
+                );
+            }
+        );
     }
 )

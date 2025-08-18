@@ -147,14 +147,16 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
      * @param collection - Name of the collection to insert to.
      * @param query - Path/values to match the document to.
      * @param update - Transformations to apply to given paths
+     * @param opts.maxRetries - Maximum number of retries if document changes. Defaults to 3.
      * @returns null if no document found
      */
     async transformOne<K extends keyof T & string>(
         collection: K,
         query: Record<string, any>,
         transformation: ZongoTransformation<T[K]>,
+        opts?: { maxRetries?: number }
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
-        return await this.transform(collection, query, transformation);
+        return await this.transform(collection, query, transformation, opts);
     }
 
     /**
@@ -163,11 +165,13 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
      * @param query - Path/values to match the document to.
      * @param update - Transformations to apply to given paths.
      * @param opts.detailed - Whether the function returns the full array of changed datas instead of number of changed docs. False by default.
+     * @param opts.maxRetries - Maximum number of retries if document changes. Defaults to 3.
      */
     async transformMany<
         K extends keyof T & string,
         O extends {
             detailed?: boolean;
+            maxRetries?: number;
         }
     >(
         collection: K,
@@ -179,7 +183,6 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             ZongoTransformDetailedReturn<T[K]> :
             ZongoTransformStandardReturn
     > {
-        // Fallback to optimistic locking approach
         const detailedResult = [];
         const standardResult = {
             notAcknowledgedCount: 0,
@@ -195,13 +198,14 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             documentIds.push(document._id);
         }
         
-        // Process each document with optimistic locking
+        // Process each document with atomic transform (includes optimistic locking)
         for (const docId of documentIds) {
             try {
                 const result = await this.transform(
                     collection, 
                     { "_id": docId }, 
-                    transformation
+                    transformation,
+                    { maxRetries: opts?.maxRetries }
                 );
                 
                 if (result) {
@@ -224,6 +228,11 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
                     error.message.includes('does not exist')
                 )) {
                     throw error;
+                }
+                // For retry exhaustion errors, also continue with other documents
+                // but log a warning that this specific document couldn't be transformed
+                if (error instanceof Error && error.message.includes('retries due to concurrent modifications')) {
+                    ZongoLog.warn(`Document ${docId} could not be transformed due to high contention`);
                 }
             }
         }
@@ -248,49 +257,64 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         collection: K,
         query: Record<string, any>,
         transformation: ZongoTransformation<T[K]>,
+        opts?: { maxRetries?: number }
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
-        const verifiedQuery = await this.getVerifiedQuery(collection, query);
-        const document = await this.collections[collection].findOne(verifiedQuery);
-        if (!document) return null;
+        const maxRetries = opts?.maxRetries ?? 3;
+        let attempt = 0;
         
-        const docId = document._id;
-        const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = { ...document };
-        delete doc._id; // so it'll parse
-        const previous = await this.schemas[collection].parseAsync(doc);
-        
-        const setAndUnset = await this.getSafeSetAndUnset(collection, transformation(previous));
-        
-        // Use findOneAndUpdate with the original _id to ensure atomicity
-        // This approach is more reliable than comparing entire document contents
-        const result = await this.collections[collection].findOneAndUpdate(
-            { "_id": docId },
-            setAndUnset,
-            { 
-                returnDocument: 'after',
-                includeResultMetadata: true
+        while (attempt <= maxRetries) {
+            const verifiedQuery = await this.getVerifiedQuery(collection, query);
+            const document = await this.collections[collection].findOne(verifiedQuery);
+            if (!document) return null;
+            
+            // Create a copy of the document for parsing (remove _id)
+            const doc: mongoDB.OptionalId<mongoDB.BSON.Document> = { ...document };
+            delete doc._id;
+            const previous = await this.schemas[collection].parseAsync(doc);
+            
+            const setAndUnset = await this.getSafeSetAndUnset(collection, transformation(previous));
+            
+            // Use optimistic locking: update only if the document hasn't changed
+            // Query with the complete original document to ensure atomicity
+            const updateQuery = { ...document };
+            
+            const result = await this.collections[collection].findOneAndUpdate(
+                updateQuery,
+                setAndUnset,
+                { 
+                    returnDocument: 'after',
+                    includeResultMetadata: true
+                }
+            );
+            
+            if (result.value) {
+                // Success - document was updated
+                const updateResult: mongoDB.UpdateResult = {
+                    acknowledged: true,
+                    matchedCount: 1,
+                    modifiedCount: result.lastErrorObject?.updatedExisting ? 1 : 0,
+                    upsertedCount: 0,
+                    upsertedId: null
+                };
+                
+                return {
+                    updated: setAndUnset,
+                    previous: previous,
+                    result: updateResult,
+                    new: result.value,
+                };
             }
-        );
-        
-        if (!result.value) {
-            // Document was deleted by another operation
-            return null;
+            
+            // Document was modified by another operation - retry if attempts remain
+            attempt++;
+            if (attempt <= maxRetries) {
+                // Brief delay before retry to reduce contention
+                await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
+            }
         }
         
-        // Convert findOneAndUpdate result to updateOne result format
-        const updateResult: mongoDB.UpdateResult = {
-            acknowledged: true,
-            matchedCount: 1,
-            modifiedCount: result.lastErrorObject?.updatedExisting ? 1 : 0,
-            upsertedCount: 0,
-            upsertedId: null
-        };
-        
-        return {
-            updated: setAndUnset,
-            previous: previous,
-            result: updateResult,
-            new: result.value,
-        };
+        // Max retries exceeded - document keeps being modified
+        throw new Error(`Transform operation failed after ${maxRetries} retries due to concurrent modifications`);
     }
 
     /**
