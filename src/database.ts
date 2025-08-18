@@ -257,7 +257,10 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
         collection: K,
         query: Record<string, any>,
         transformation: ZongoTransformation<T[K]>,
-        opts?: { maxRetries?: number }
+        opts?: {
+            maxRetries?: number,
+            nonAtomic?: true,
+        }
     ): Promise<ZongoTransformHelperReturn<T[K]> | null> {
         const maxRetries = opts?.maxRetries ?? 3;
         let attempt = 0;
@@ -276,7 +279,7 @@ export class ZongoDB<T extends Readonly<Record<string, z.ZodObject<any>>>> {
             
             // Use optimistic locking: update only if the document hasn't changed
             // Query with the complete original document to ensure atomicity
-            const updateQuery = { ...document };
+            const updateQuery = opts?.nonAtomic ? { _id: document._id } : { ...document };
             
             const result = await this.collections[collection].findOneAndUpdate(
                 updateQuery,
