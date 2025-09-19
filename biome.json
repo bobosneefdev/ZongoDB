@@ -1,0 +1,77 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.2.4/schema.json",
+	"vcs": {
+		"enabled": false,
+		"clientKind": "git",
+		"useIgnoreFile": false
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": [
+			"**",
+			"!**/dist",
+			"!**/node_modules",
+			"!**/package-lock.json",
+			"!**/package.json"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 4,
+		"lineEnding": "lf",
+		"lineWidth": 100
+	},
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"style": {
+				"useConst": "error",
+				"noUselessElse": "error",
+				"noParameterProperties": "error",
+				"noYodaExpression": "error",
+				"noNonNullAssertion": "off",
+				"useImportType": "off",
+				"noParameterAssign": "error",
+				"useAsConstAssertion": "error",
+				"useDefaultParameterLast": "error",
+				"useEnumInitializers": "error",
+				"useSelfClosingElements": "error",
+				"useSingleVarDeclarator": "error",
+				"noUnusedTemplateLiteral": "error",
+				"useNumberNamespace": "error",
+				"noInferrableTypes": "error"
+			},
+			"suspicious": {
+				"noDoubleEquals": "error",
+				"noExportsInTest": "error",
+				"noImportAssign": "error",
+				"noExplicitAny": "off",
+				"noThenProperty": "off",
+				"noVar": "error"
+			},
+			"complexity": {
+				"noStaticOnlyClass": "off",
+				"noCommaOperator": "error"
+			},
+			"correctness": {
+				"noUnusedImports": "error"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"arrowParentheses": "always",
+			"quoteStyle": "double",
+			"quoteProperties": "asNeeded",
+			"bracketSameLine": false,
+			"bracketSpacing": true,
+			"semicolons": "always",
+			"trailingCommas": "all"
+		},
+		"linter": {
+			"enabled": true
+		}
+	}
+}

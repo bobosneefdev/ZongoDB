@@ -1,6 +1,6 @@
 {
     "name": "@bobosneefdev/zongodb",
-    "version": "1.0.33",
+    "version": "2.0.0",
     "description": "Zod schemas + MongoDB",
     "main": "./dist/index.js",
     "module": "./dist/index.mjs",
@@ -32,15 +32,16 @@
     "homepage": "https://github.com/bobosneefdev/ZongoDB#readme",
     "devDependencies": {
         "@types/jest": "^30.0.0",
-        "@types/node": "^24.0.14",
+        "@types/node": "^24.5.2",
         "tsup": "^8.5.0",
-        "typescript": "^5.8.3"
+        "typescript": "^5.9.2"
     },
     "dependencies": {
+        "@biomejs/biome": "^2.2.4",
         "@bobosneefdev/zodutil": "^1.0.10",
-        "dotenv": "^17.2.0",
-        "mongodb": "^6.17.0",
-        "zod": "^3.25.23"
+        "dotenv": "^17.2.2",
+        "mongodb": "^6.20.0",
+        "zod": "^4.1.9"
     },
     "files": [
         "dist",
