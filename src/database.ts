@@ -1,5 +1,5 @@
 import z from "zod"
-import mongoDB from "mongodb"
+import { Collection, CreateIndexesOptions, Db, DbOptions, IndexDirection, MongoClient, MongoClientOptions } from "mongodb"
 import { DEFAULT_MONGO_URI } from "./constants";
 import { Paths } from "./types";
 import { typedObjectEntries } from "./util";
@@ -11,8 +11,8 @@ export class Zongo<
 > {
     readonly schemas: T;
     readonly options: U;
-    readonly client: mongoDB.MongoClient;
-    readonly db: mongoDB.Db;
+    readonly client: MongoClient;
+    readonly db: Db;
     readonly collections: ZongoCollections<T>;
 
     constructor(
@@ -21,7 +21,7 @@ export class Zongo<
     ) {
         this.schemas = schemas;
         this.options = options;
-        this.client = new mongoDB.MongoClient(
+        this.client = new MongoClient(
             options.mongoUri ?? DEFAULT_MONGO_URI,
             options.clientOptions,
         );
@@ -82,18 +82,18 @@ export class Zongo<
 export type ZongoSchemas = Record<string, z.ZodObject<{ _id?: never } & Record<string, z.ZodTypeAny>>>;
 
 export type ZongoCollections<T extends ZongoSchemas = ZongoSchemas> = {
-    [K in keyof T]: mongoDB.Collection<z.infer<T[K]>>;
+    [K in keyof T]: Collection<z.infer<T[K]>>;
 };
 
 export type ZongoOptions<T extends ZongoSchemas> = {
     name: string;
     mongoUri?: string;
-    clientOptions?: mongoDB.MongoClientOptions;
-    dbOptions?: mongoDB.DbOptions;
+    clientOptions?: MongoClientOptions;
+    dbOptions?: DbOptions;
     indexes?: {
         [K in keyof T]?: Array<{
-            index: Partial<Record<Paths<z.infer<T[K]>>, mongoDB.IndexDirection>>;
-            options?: mongoDB.CreateIndexesOptions;
+            index: Partial<Record<Paths<z.infer<T[K]>>, IndexDirection>>;
+            options?: CreateIndexesOptions;
         }>;
     };
 };
