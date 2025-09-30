@@ -49,7 +49,6 @@ export class Zongo<
 
     private applyMongoValidators(schemas: T) {
         for (const [key, schema] of typedObjectEntries(schemas)) {
-            console.log(zodToMongoValidator(schema));
             this.db.command({
                 collMod: key,
                 validator: zodToMongoValidator(schema),
