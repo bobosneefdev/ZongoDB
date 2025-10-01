@@ -87,16 +87,16 @@ export function zodToMongoValidator(zod: z.ZodObject) {
 }
 
 function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
-	if (!jsonSchema.type) throw new Error("Type is required");
-
 	const cleanedSchema: MongoSchema = {};
 
-	cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
-		? jsonSchema.type.map(
-				(type: NonNullable<z.core.JSONSchema.JSONSchema["type"]>) =>
-					JSON_TO_BSON_TYPES[type],
-			)
-		: JSON_TO_BSON_TYPES[jsonSchema.type];
+    if (jsonSchema.type) {
+        cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
+            ? jsonSchema.type.map(
+                    (type: NonNullable<z.core.JSONSchema.JSONSchema["type"]>) =>
+                        JSON_TO_BSON_TYPES[type],
+                )
+            : JSON_TO_BSON_TYPES[jsonSchema.type];
+    }
 
 	if (jsonSchema.description) {
 		const [description, rawTags] = jsonSchema.description.split("##");
