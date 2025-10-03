@@ -8,7 +8,7 @@ const TEST_DB = new Zongo(
             name: z.string(),
             email: z.email(),
             age: z.number().int(),
-            cars: z.array(z.enum(["Toyota", "Honda", "Ford"])).describe("##uniqueItems"),
+            cars: z.record(z.enum(["Toyota", "Honda", "Ford"]), z.array(z.string()).describe("##uniqueItems")),
         }),
     },
     {
@@ -29,7 +29,11 @@ describe("main", () => {
                 name: "John Doe",
                 age: 20,
                 email: "john.doe@example.com",
-                cars: ["Toyota", "Honda"],
+                cars: {
+                    Ford: ["Flex", "Mustang"],
+                    Toyota: [],
+                    Honda: [],
+                },
             }
             console.log(JSON.stringify(doc, null, 2));
             const result = await TEST_DB.collections.user.insertOne(doc);

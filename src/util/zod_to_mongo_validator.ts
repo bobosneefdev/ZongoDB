@@ -82,7 +82,10 @@ export type MongoSchema = {
 
 export function zodToMongoValidator(zod: z.ZodObject) {
 	const jsonSchema = z.toJSONSchema(zod);
+	// console.log(JSON.stringify(jsonSchema, null, 2));
 	const bsonSchema = toMongoSchema(jsonSchema);
+	// console.log(JSON.stringify(bsonSchema, null, 2));
+
 	return { $jsonSchema: bsonSchema };
 }
 
@@ -100,16 +103,38 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 
 	if (jsonSchema.description) {
 		const [description, rawTags] = jsonSchema.description.split("##");
-		const tags = rawTags.split(":");
-		for (const tag of tags) {
-			if (tag === "uniqueItems") {
-				cleanedSchema.uniqueItems = true;
+		if (rawTags) {
+			const tags = rawTags.split(":");
+			for (const tag of tags) {
+				if (tag === "uniqueItems") {
+					cleanedSchema.uniqueItems = true;
+				}
 			}
 		}
 		if (description) {
 			cleanedSchema.description = description;
 		}
 	}
+
+	// Convert enum records to properties
+	// if (
+	// 	jsonSchema.type === "object" &&
+	// 	typeof jsonSchema.additionalProperties !== "undefined" &&
+	// 	typeof jsonSchema.propertyNames === "object" &&
+	// 	jsonSchema.propertyNames.enum &&
+	// 	Object.keys(jsonSchema.propertyNames).length === 2
+	// ) {
+	// 	if (!jsonSchema.properties) {
+	// 		jsonSchema.properties = {};
+	// 	}
+	// 	for (const key of jsonSchema.propertyNames.enum) {
+	// 		if (typeof key !== "string") continue;
+	// 		if (jsonSchema.properties[key]) throw new Error(`Conflict: Property ${key} already exists in properties`);
+	// 		jsonSchema.properties[key] = jsonSchema.additionalProperties;
+	// 	}
+	// 	delete jsonSchema.additionalProperties;
+	// 	delete jsonSchema.propertyNames;
+	// }
 
 	const allOf = jsonSchema.allOf?.map(toMongoSchema);
 	if (allOf) {

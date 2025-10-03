@@ -1,6 +1,6 @@
 {
     "name": "@bobosneefdev/zongodb",
-    "version": "2.0.4",
+    "version": "2.0.6",
     "description": "Zod schemas + MongoDB",
     "main": "./dist/index.js",
     "module": "./dist/index.mjs",
