@@ -28,7 +28,7 @@ type BsonType =
 const JSON_TO_BSON_TYPES: Record<NonNullable<z.core.JSONSchema.JSONSchema["type"]>, BsonType> = {
 	array: "array",
 	boolean: "bool",
-	integer: "int",
+	integer: "long",
 	null: "null",
 	number: "number",
 	object: "object",
