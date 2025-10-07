@@ -13,6 +13,9 @@ const TEST_DB = new Zongo(
     },
     {
         name: "ZongoTest",
+        customJsonToBsonTypes: {
+            integer: "number",
+        }
     },
 );
 

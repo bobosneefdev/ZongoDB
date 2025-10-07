@@ -30,7 +30,9 @@ export class Zongo<
             options.dbOptions,
         );
         this.collections = this.createCollections(schemas);
-        this.applyMongoValidators(schemas);
+        this.applyMongoValidators(schemas).catch((error) => {
+            console.error("Failed to apply MongoDB validators:", error);
+        });
         if (options.indexes) {
             this.applyIndexes(options.indexes);
         }
@@ -47,12 +49,24 @@ export class Zongo<
         }, {} as ZongoCollections<T>);
     }
 
-    private applyMongoValidators(schemas: T) {
+    private async applyMongoValidators(schemas: T) {
+        const collectionsArr = await this.db.listCollections().toArray();
+        const collections = new Set(collectionsArr.map(c => c.name));
         for (const [key, schema] of typedObjectEntries(schemas)) {
-            this.db.command({
-                collMod: key,
-                validator: zodToMongoValidator(schema, this.options.customJsonToBsonTypes),
-            });
+            try {
+                if (collections.has(String(key))) {
+                    await this.db.command({
+                        collMod: String(key),
+                        validator: zodToMongoValidator(schema, this.options.customJsonToBsonTypes),
+                    });
+                } else {
+                    await this.db.createCollection(String(key), {
+                        validator: zodToMongoValidator(schema, this.options.customJsonToBsonTypes),
+                    });
+                }
+            } catch (error) {
+                console.error(`Failed to apply validator for collection "${String(key)}":`, error);
+            }
         }
     }
 
