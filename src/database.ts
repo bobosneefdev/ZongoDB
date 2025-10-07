@@ -1,7 +1,7 @@
 import z from "zod"
 import { Collection, CreateIndexesOptions, Db, DbOptions, IndexDirection, MongoClient, MongoClientOptions } from "mongodb"
 import { DEFAULT_MONGO_URI } from "./constants";
-import { Paths } from "./types";
+import { JsonToBsonTypes, Paths } from "./types";
 import { typedObjectEntries } from "./util";
 import { zodToMongoValidator } from "./util/zod_to_mongo_validator";
 
@@ -51,7 +51,7 @@ export class Zongo<
         for (const [key, schema] of typedObjectEntries(schemas)) {
             this.db.command({
                 collMod: key,
-                validator: zodToMongoValidator(schema),
+                validator: zodToMongoValidator(schema, this.options.customJsonToBsonTypes),
             });
         }
     }
@@ -95,4 +95,5 @@ export type ZongoOptions<T extends ZongoSchemas> = {
             options?: CreateIndexesOptions;
         }>;
     };
+    customJsonToBsonTypes?: Partial<JsonToBsonTypes>;
 };

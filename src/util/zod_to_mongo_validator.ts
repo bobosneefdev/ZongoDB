@@ -1,31 +1,10 @@
 import z from "zod";
 import { typedObjectEntries } from "../util";
-
-type JsonType = "object" | "array" | "number" | "boolean" | "string" | "null";
-
-type BsonType =
-	| "double"
-	| "string"
-	| "object"
-	| "array"
-	| "binData"
-	| "objectId"
-	| "bool"
-	| "date"
-	| "null"
-	| "regex"
-	| "javascript"
-	| "int"
-	| "timestamp"
-	| "long"
-	| "decimal"
-	| "minKey"
-	| "maxKey"
-	| "number";
+import { BsonType, JsonToBsonTypes, JsonType } from "../types";
 
 // https://www.mongodb.com/docs/manual/reference/operator/query/jsonSchema/#available-keywords
 
-const JSON_TO_BSON_TYPES: Record<NonNullable<z.core.JSONSchema.JSONSchema["type"]>, BsonType> = {
+const JSON_TO_BSON_TYPES: JsonToBsonTypes = {
 	array: "array",
 	boolean: "bool",
 	integer: "long",
@@ -80,25 +59,30 @@ export type MongoSchema = {
 	uniqueItems?: boolean;
 };
 
-export function zodToMongoValidator(zod: z.ZodObject) {
+export function zodToMongoValidator(zod: z.ZodObject, customJsonToBsonTypes?: Partial<JsonToBsonTypes>) {
 	const jsonSchema = z.toJSONSchema(zod);
 	// console.log(JSON.stringify(jsonSchema, null, 2));
-	const bsonSchema = toMongoSchema(jsonSchema);
+	const bsonSchema = toMongoSchema(jsonSchema, customJsonToBsonTypes);
 	// console.log(JSON.stringify(bsonSchema, null, 2));
 
 	return { $jsonSchema: bsonSchema };
 }
 
-function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
+function toMongoSchema(
+	jsonSchema: z.core.JSONSchema.JSONSchema,
+	customJsonToBsonTypes?: Partial<JsonToBsonTypes>,
+): MongoSchema {
 	const cleanedSchema: MongoSchema = {};
+
+	const jsonToBsonTypes = { ...JSON_TO_BSON_TYPES, ...customJsonToBsonTypes };
 
     if (jsonSchema.type) {
         cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
             ? jsonSchema.type.map(
                     (type: NonNullable<z.core.JSONSchema.JSONSchema["type"]>) =>
-                        JSON_TO_BSON_TYPES[type],
+                        jsonToBsonTypes[type],
                 )
-            : JSON_TO_BSON_TYPES[jsonSchema.type];
+            : jsonToBsonTypes[jsonSchema.type];
     }
 
 	if (jsonSchema.description) {
@@ -136,14 +120,14 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 	// 	delete jsonSchema.propertyNames;
 	// }
 
-	const allOf = jsonSchema.allOf?.map(toMongoSchema);
+	const allOf = jsonSchema.allOf?.map((value) => toMongoSchema(value, customJsonToBsonTypes));
 	if (allOf) {
 		cleanedSchema.allOf = allOf;
 	}
 
 	const additionalItems =
 		typeof jsonSchema.additionalItems === "object"
-			? toMongoSchema(jsonSchema.additionalItems)
+			? toMongoSchema(jsonSchema.additionalItems, customJsonToBsonTypes)
 			: undefined;
 	if (additionalItems) {
 		cleanedSchema.additionalItems = additionalItems;
@@ -151,13 +135,13 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 
 	const additionalProperties =
 		typeof jsonSchema.additionalProperties === "object"
-			? toMongoSchema(jsonSchema.additionalProperties)
+			? toMongoSchema(jsonSchema.additionalProperties, customJsonToBsonTypes)
 			: undefined;
 	if (additionalProperties) {
 		cleanedSchema.additionalProperties = additionalProperties;
 	}
 
-	const anyOf = jsonSchema.anyOf?.map(toMongoSchema);
+	const anyOf = jsonSchema.anyOf?.map((value) => toMongoSchema(value, customJsonToBsonTypes));
 	if (anyOf) {
 		cleanedSchema.anyOf = anyOf;
 	}
@@ -167,7 +151,7 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 	}
 
 	if (jsonSchema.oneOf) {
-		cleanedSchema.oneOf = jsonSchema.oneOf.map(toMongoSchema);
+		cleanedSchema.oneOf = jsonSchema.oneOf.map((value) => toMongoSchema(value, customJsonToBsonTypes));
 	}
 
 	if (jsonSchema.required) {
@@ -180,8 +164,8 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 				? Array.isArray(jsonSchema.items)
 					? jsonSchema.items
 							.filter((schema) => typeof schema === "object")
-							.map(toMongoSchema)
-					: toMongoSchema(jsonSchema.items)
+							.map((value) => toMongoSchema(value, customJsonToBsonTypes))
+					: toMongoSchema(jsonSchema.items, customJsonToBsonTypes)
 				: undefined;
 	}
 
@@ -230,7 +214,7 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 	}
 
 	if (jsonSchema.not && typeof jsonSchema.not === "object") {
-		cleanedSchema.not = toMongoSchema(jsonSchema.not);
+		cleanedSchema.not = toMongoSchema(jsonSchema.not, customJsonToBsonTypes);
 	}
 
 	if (jsonSchema.pattern) {
@@ -238,11 +222,11 @@ function toMongoSchema(jsonSchema: z.core.JSONSchema.JSONSchema): MongoSchema {
 	}
 
 	if (jsonSchema.patternProperties) {
-		cleanedSchema.patternProperties = formatRecord(jsonSchema.patternProperties);
+		cleanedSchema.patternProperties = formatRecord(jsonSchema.patternProperties, customJsonToBsonTypes);
 	}
 
 	if (jsonSchema.properties) {
-		cleanedSchema.properties = formatRecord(jsonSchema.properties);
+		cleanedSchema.properties = formatRecord(jsonSchema.properties, customJsonToBsonTypes);
 	}
 
 	if (jsonSchema.title) {
@@ -263,12 +247,13 @@ function formatExclusive(exclusive: boolean | number | undefined): boolean | und
 
 function formatRecord(
 	record?: Record<string, z.core.JSONSchema._JSONSchema>,
+	customJsonToBsonTypes?: Partial<JsonToBsonTypes>,
 ): Record<string, MongoSchema> | undefined {
 	return record
 		? typedObjectEntries(record).reduce(
 				(prev, [key, value]) => {
 					if (typeof value !== "object") return prev;
-					prev[key] = toMongoSchema(value);
+					prev[key] = toMongoSchema(value, customJsonToBsonTypes);
 					return prev;
 				},
 				{} as Record<string, MongoSchema>,
