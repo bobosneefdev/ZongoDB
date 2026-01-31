@@ -2,12 +2,13 @@ import z from "zod";
 import { typedObjectEntries } from "../util";
 import { BsonType, JsonToBsonTypes, JsonType } from "../types";
 
+// Good reference
 // https://www.mongodb.com/docs/manual/reference/operator/query/jsonSchema/#available-keywords
 
-const JSON_TO_BSON_TYPES: JsonToBsonTypes = {
+const DEFAULT_JSON_TO_BSON_TYPES: JsonToBsonTypes = {
 	array: "array",
 	boolean: "bool",
-	integer: "long",
+	integer: "number", // changed from long in v3 due to JS primitives
 	null: "null",
 	number: "number",
 	object: "object",
@@ -74,7 +75,7 @@ function toMongoSchema(
 ): MongoSchema {
 	const cleanedSchema: MongoSchema = {};
 
-	const jsonToBsonTypes = { ...JSON_TO_BSON_TYPES, ...customJsonToBsonTypes };
+	const jsonToBsonTypes = { ...DEFAULT_JSON_TO_BSON_TYPES, ...customJsonToBsonTypes };
 
     if (jsonSchema.type) {
         cleanedSchema.bsonType = Array.isArray(jsonSchema.type)

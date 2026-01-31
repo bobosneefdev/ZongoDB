@@ -52,7 +52,7 @@ export class Zongo<
     private async applyMongoValidators(schemas: T) {
         const collectionsArr = await this.db.listCollections().toArray();
         const collections = new Set(collectionsArr.map(c => c.name));
-        for (const [key, schema] of typedObjectEntries(schemas)) {
+        for (const [key, schema] of Object.entries(schemas)) {
             try {
                 if (collections.has(String(key))) {
                     await this.db.command({
@@ -78,7 +78,7 @@ export class Zongo<
             }
         }
 
-        for (const [collection, indexes] of typedObjectEntries(initIndexes)) {
+        for (const [collection, indexes] of Object.entries(initIndexes)) {
             if (!indexes) continue;
             for (const index of indexes) {
                 this.collections[collection as string].createIndex(
@@ -103,11 +103,17 @@ export type ZongoOptions<T extends ZongoSchemas> = {
     mongoUri?: string;
     clientOptions?: MongoClientOptions;
     dbOptions?: DbOptions;
-    indexes?: {
-        [K in keyof T]?: Array<{
-            index: Partial<Record<Paths<z.infer<T[K]>>, IndexDirection>>;
-            options?: CreateIndexesOptions;
-        }>;
-    };
+    indexes?: ZongoIndexes<T>;
     customJsonToBsonTypes?: Partial<JsonToBsonTypes>;
+};
+
+type StrictZongoIndex<T extends ZongoSchemas, K extends keyof T> = {
+    index: { [P in Paths<z.infer<T[K]>>]?: IndexDirection };
+    options?: CreateIndexesOptions;
+};
+
+export type ZongoIndexes<T extends ZongoSchemas> = {
+    [K in keyof T & string]?: Array<StrictZongoIndex<T, K>>;
+} & {
+    [K in keyof Omit<string, keyof T & string>]: never;
 };
