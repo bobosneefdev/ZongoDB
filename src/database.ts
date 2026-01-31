@@ -114,6 +114,10 @@ type StrictZongoIndex<T extends ZongoSchemas, K extends keyof T> = {
 
 export type ZongoIndexes<T extends ZongoSchemas> = {
     [K in keyof T & string]?: Array<StrictZongoIndex<T, K>>;
-} & {
-    [K in keyof Omit<string, keyof T & string>]: never;
 };
+
+export const zJobTimestamp = z.object({
+	name: z.string(),
+	timestamp: z.number().int(),
+});
+export type JobTimestamp = z.infer<typeof zJobTimestamp>;

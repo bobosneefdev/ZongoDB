@@ -1,6 +1,6 @@
 {
     "name": "@bobosneefdev/zongodb",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "description": "Zod schemas + MongoDB",
     "packageManager": "bun@1.3.5",
     "exports": {
