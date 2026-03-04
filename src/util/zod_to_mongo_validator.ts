@@ -1,6 +1,6 @@
 import z from "zod";
-import { typedObjectEntries } from "../util";
 import { BsonType, JsonToBsonTypes, JsonType } from "../types";
+import { typedObjectEntries } from "../util";
 
 // Good reference
 // https://www.mongodb.com/docs/manual/reference/operator/query/jsonSchema/#available-keywords
@@ -60,7 +60,10 @@ export type MongoSchema = {
 	uniqueItems?: boolean;
 };
 
-export function zodToMongoValidator(zod: z.ZodObject, customJsonToBsonTypes?: Partial<JsonToBsonTypes>) {
+export function zodToMongoValidator(
+	zod: z.ZodObject,
+	customJsonToBsonTypes?: Partial<JsonToBsonTypes>,
+) {
 	const jsonSchema = z.toJSONSchema(zod);
 	// console.log(JSON.stringify(jsonSchema, null, 2));
 	const bsonSchema = toMongoSchema(jsonSchema, customJsonToBsonTypes);
@@ -77,14 +80,14 @@ function toMongoSchema(
 
 	const jsonToBsonTypes = { ...DEFAULT_JSON_TO_BSON_TYPES, ...customJsonToBsonTypes };
 
-    if (jsonSchema.type) {
-        cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
-            ? jsonSchema.type.map(
-                    (type: NonNullable<z.core.JSONSchema.JSONSchema["type"]>) =>
-                        jsonToBsonTypes[type],
-                )
-            : jsonToBsonTypes[jsonSchema.type];
-    }
+	if (jsonSchema.type) {
+		cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
+			? jsonSchema.type.map(
+					(type: NonNullable<z.core.JSONSchema.JSONSchema["type"]>) =>
+						jsonToBsonTypes[type],
+				)
+			: jsonToBsonTypes[jsonSchema.type];
+	}
 
 	if (jsonSchema.description) {
 		const [description, rawTags] = jsonSchema.description.split("##");
@@ -152,7 +155,9 @@ function toMongoSchema(
 	}
 
 	if (jsonSchema.oneOf) {
-		cleanedSchema.oneOf = jsonSchema.oneOf.map((value) => toMongoSchema(value, customJsonToBsonTypes));
+		cleanedSchema.oneOf = jsonSchema.oneOf.map((value) =>
+			toMongoSchema(value, customJsonToBsonTypes),
+		);
 	}
 
 	if (jsonSchema.required) {
@@ -223,7 +228,10 @@ function toMongoSchema(
 	}
 
 	if (jsonSchema.patternProperties) {
-		cleanedSchema.patternProperties = formatRecord(jsonSchema.patternProperties, customJsonToBsonTypes);
+		cleanedSchema.patternProperties = formatRecord(
+			jsonSchema.patternProperties,
+			customJsonToBsonTypes,
+		);
 	}
 
 	if (jsonSchema.properties) {
