@@ -5,6 +5,7 @@
 		"esModuleInterop": true,
 		"strictNullChecks": true,
 		"target": "ES6",
+		"lib": ["ES2022"],
 		"moduleResolution": "node",
 		"module": "ES6",
 		"declaration": true,

@@ -1,4 +1,5 @@
 import z from "zod";
+import { BSON_TYPE_META_KEY, BSON_TYPE_SENTINEL } from "../bson";
 import { BsonType, JsonToBsonTypes, JsonType } from "../types";
 import { typedObjectEntries } from "../util";
 
@@ -64,7 +65,32 @@ export function zodToMongoValidator(
 	zod: z.ZodObject,
 	customJsonToBsonTypes?: Partial<JsonToBsonTypes>,
 ) {
-	const jsonSchema = z.toJSONSchema(zod);
+	const jsonSchema = z.toJSONSchema(zod, {
+		// Native BSON types (date, objectId, binData) have no JSON Schema
+		// representation. Without this, `z.date()` and friends throw during
+		// conversion; instead we let them through and re-tag them below.
+		unrepresentable: "any",
+		override: (ctx) => {
+			const def = (ctx.zodSchema as { _zod: { def: { type?: string } } })._zod.def;
+			// zod spreads registered `.meta()` onto the produced JSON Schema, so the
+			// bson-type tag from the helpers in ./bson lands here.
+			const target = ctx.jsonSchema as Record<string, unknown>;
+
+			let bsonType: string | undefined;
+			if (typeof target[BSON_TYPE_META_KEY] === "string") {
+				bsonType = target[BSON_TYPE_META_KEY] as string;
+			} else if (def.type === "date") {
+				bsonType = "date";
+			}
+
+			if (bsonType) {
+				// These are leaf schemas; replace everything zod produced with a
+				// single sentinel that toMongoSchema turns into `bsonType`.
+				for (const key of Object.keys(target)) delete target[key];
+				target[BSON_TYPE_SENTINEL] = bsonType;
+			}
+		},
+	});
 	// console.log(JSON.stringify(jsonSchema, null, 2));
 	const bsonSchema = toMongoSchema(jsonSchema, customJsonToBsonTypes);
 	// console.log(JSON.stringify(bsonSchema, null, 2));
@@ -79,6 +105,14 @@ function toMongoSchema(
 	const cleanedSchema: MongoSchema = {};
 
 	const jsonToBsonTypes = { ...DEFAULT_JSON_TO_BSON_TYPES, ...customJsonToBsonTypes };
+
+	// Native BSON type tagged by the override in zodToMongoValidator (date,
+	// objectId, binData). This is a leaf node, so emit bsonType and stop.
+	const bsonSentinel = (jsonSchema as Record<string, unknown>)[BSON_TYPE_SENTINEL];
+	if (typeof bsonSentinel === "string") {
+		cleanedSchema.bsonType = bsonSentinel as BsonType;
+		return cleanedSchema;
+	}
 
 	if (jsonSchema.type) {
 		cleanedSchema.bsonType = Array.isArray(jsonSchema.type)
