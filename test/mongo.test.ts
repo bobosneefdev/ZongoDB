@@ -1,10 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { toStandardJsonSchema } from "@valibot/to-json-schema";
 import { type } from "arktype";
+import { Schema } from "effect";
 import { Binary, type Db, MongoClient, ObjectId } from "mongodb";
 import * as v from "valibot";
 import { z } from "zod";
 import { compileSchema, createZongo, ZongoInitializationError } from "../src";
+import { BinarySchema, effectToMongoSchema, ObjectIdSchema } from "../src/adapters/effect";
+import { zodToMongoSchema } from "../src/adapters/zod";
 
 const client = new MongoClient(process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017", {
 	serverSelectionTimeoutMS: 3000,
@@ -158,12 +161,7 @@ describe("MongoDB validation", () => {
 			collections: {
 				dates: {
 					schema: z.strictObject({ created: z.date() }),
-					toJSONSchema: () => ({
-						type: "object",
-						required: ["created"],
-						additionalProperties: false,
-						properties: { created: { bsonType: "date" } },
-					}),
+					toMongoSchema: zodToMongoSchema,
 				},
 			},
 		});
@@ -171,6 +169,30 @@ describe("MongoDB validation", () => {
 		await expect(
 			db.collection("dates").insertOne({ created: "2026-01-01" }),
 		).rejects.toMatchObject({ code: 121 });
+	});
+
+	test("Effect declarations validate and round-trip BSON values", async () => {
+		const result = await createZongo({
+			db,
+			collections: {
+				effectValues: {
+					schema: Schema.toStandardSchemaV1(
+						Schema.Struct({
+							created: Schema.Date,
+							id: ObjectIdSchema,
+							data: BinarySchema,
+						}),
+					),
+					toMongoSchema: effectToMongoSchema,
+				},
+			},
+		});
+		const value = { created: new Date(), id: new ObjectId(), data: new Binary([1, 2]) };
+		await result.collections.effectValues.insertOne(value);
+		const row = await result.collections.effectValues.findOne({});
+		expect(row?.created).toBeInstanceOf(Date);
+		expect(row?.id).toBeInstanceOf(ObjectId);
+		expect(row?.data).toBeInstanceOf(Binary);
 	});
 
 	test("adopts v4 TTL indexes and validates native BSON fields", async () => {
@@ -181,16 +203,7 @@ describe("MongoDB validation", () => {
 		});
 		const definition = {
 			schema,
-			toJSONSchema: () => ({
-				type: "object",
-				additionalProperties: false,
-				required: ["ref", "createdAt", "blob"],
-				properties: {
-					ref: { bsonType: "objectId" },
-					createdAt: { bsonType: "date" },
-					blob: { bsonType: "binData" },
-				},
-			}),
+			toMongoSchema: zodToMongoSchema,
 			indexes: [
 				{
 					key: { createdAt: 1 as const },

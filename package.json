@@ -1,6 +1,6 @@
 {
   "name": "@bobosneefdev/zongodb",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "author": "bobosneefdev",
   "repository": {
     "type": "git",
@@ -13,18 +13,37 @@
     "@types/node": "^25.1.0",
     "@valibot/to-json-schema": "^1.7.1",
     "arktype": "^2.2.3",
+    "effect": "^4.0.0-rc.113",
     "tsdown": "^0.21.0-beta.2",
     "typescript": "^5.9.3",
     "valibot": "^1.5.0",
     "zod": "^4.6.1"
   },
   "peerDependencies": {
-    "mongodb": "^7.0.0"
+    "effect": ">=4.0.0-rc <5",
+    "mongodb": "^7.0.0",
+    "zod": "^4.6.0"
+  },
+  "peerDependenciesMeta": {
+    "effect": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
+    },
+    "./zod": {
+      "types": "./dist/adapters/zod.d.mts",
+      "import": "./dist/adapters/zod.mjs"
+    },
+    "./effect": {
+      "types": "./dist/adapters/effect.d.mts",
+      "import": "./dist/adapters/effect.mjs"
     }
   },
   "bugs": {

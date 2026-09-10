@@ -141,7 +141,22 @@ describe("schema compilation", () => {
 		});
 	});
 
-	test("standard-json is an optional per-collection bridge", async () => {
+	test("toMongoSchema accepts optional per-collection bridges", async () => {
+		const schema = z.object({ name: z.string() });
+		const result = await compileCollections({
+			users: {
+				schema,
+				toMongoSchema: (s) => {
+					return toJsonSchema(s, { target: "draft-7", io: "output" });
+				},
+			},
+		});
+		expect(result.users).toEqual(
+			compileSchema(schema["~standard"].jsonSchema.output({ target: "draft-07" })),
+		);
+	});
+
+	test("keeps the deprecated toJSONSchema alias working", async () => {
 		const schema = z.object({ name: z.string() });
 		const result = await compileCollections({
 			users: {
@@ -157,13 +172,29 @@ describe("schema compilation", () => {
 		);
 	});
 
+	test("rejects conflicting converter keys", async () => {
+		const schema = z.object({ name: z.string() });
+		await expect(
+			compileCollections({
+				users: {
+					schema,
+					toMongoSchema: () => ({ type: "object" }),
+					toJSONSchema: () => ({ type: "object" }),
+				},
+			}),
+		).rejects.toMatchObject({
+			operation: "compile",
+			cause: { message: "Use either toMongoSchema or toJSONSchema, not both" },
+		});
+	});
+
 	test("still rejects non-document schema outputs and malformed converter results", async () => {
 		await expect(
 			compileCollections({ items: { schema: z.array(z.string()) } }),
 		).rejects.toMatchObject({ operation: "compile", cause: { name: "SchemaConversionError" } });
 		await expect(
 			compileCollections({
-				items: { schema: z.object({ name: z.string() }), toJSONSchema: async () => [] },
+				items: { schema: z.object({ name: z.string() }), toMongoSchema: async () => [] },
 			}),
 		).rejects.toMatchObject({ operation: "compile", cause: { name: "SchemaConversionError" } });
 	});

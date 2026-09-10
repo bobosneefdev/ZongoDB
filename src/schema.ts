@@ -299,7 +299,7 @@ export function compileSchema(input: object): MongoValidator {
 				}
 				fail(
 					at,
-					`Unsupported keyword "${key}"; provide an explicit toJSONSchema converter`,
+					`Unsupported keyword "${key}"; provide an explicit toMongoSchema converter`,
 				);
 			}
 			if (

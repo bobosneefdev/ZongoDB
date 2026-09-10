@@ -35,7 +35,12 @@ export type ZongoIndex<T extends object> = CreateIndexesOptions &
 		| { rawKey: ZongoIndexSpecification; key?: never }
 	);
 
-/** Return a Draft 7 document schema, optionally using MongoDB's bsonType extension. */
+/** Return a MongoDB-compatible schema for the stored output type. */
+export type MongoSchemaConverter<S extends DocumentSchema> = (
+	schema: S,
+) => object | PromiseLike<object>;
+
+/** @deprecated Use MongoSchemaConverter and toMongoSchema. */
 export type SchemaConverter<S extends DocumentSchema> = (
 	schema: S,
 	options: { target: "draft-07"; io: "output" },
@@ -44,11 +49,17 @@ export type SchemaConverter<S extends DocumentSchema> = (
 type CollectionOptions<S extends DocumentSchema> = {
 	schema: S;
 	indexes?: readonly ZongoIndex<SchemaOutput<S>>[];
+	toMongoSchema?: MongoSchemaConverter<NoInfer<S>>;
+	/** @deprecated Use toMongoSchema. */
 	toJSONSchema?: SchemaConverter<NoInfer<S>>;
 };
 
 export type CollectionDefinition<S extends DocumentSchema> = CollectionOptions<S> &
-	(S extends StandardJSONSchemaV1 ? unknown : { toJSONSchema: SchemaConverter<NoInfer<S>> });
+	(S extends StandardJSONSchemaV1
+		? unknown
+		:
+				| { toMongoSchema: MongoSchemaConverter<NoInfer<S>> }
+				| { toJSONSchema: SchemaConverter<NoInfer<S>> });
 
 /** A direct inference path for native schemas, including generic application wrappers. */
 export type NativeCollectionDefinitions<

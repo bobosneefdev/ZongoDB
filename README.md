@@ -12,7 +12,7 @@ bun add @bobosneefdev/zongodb mongodb
 bun add zod
 ```
 
-ESM only. Requires Node 20.19+, MongoDB driver 7, and TypeScript 5.4+ for type declarations. Zod is not a runtime dependency.
+ESM only. Requires Node 20.19+, MongoDB driver 7, and TypeScript 5.4+ for type declarations. Schema-library adapters use optional peer dependencies and do not affect the core import.
 
 ## Usage
 
@@ -83,32 +83,51 @@ import { compileCollections } from "@bobosneefdev/zongodb";
 const validators = await compileCollections({
   users: {
     schema: z.object({ name: z.string() }),
-    toJSONSchema: (schema) => toJsonSchema(schema, { target: "draft-7", io: "output" }),
+    toMongoSchema: (schema) => toJsonSchema(schema, { target: "draft-7", io: "output" }),
   },
 });
 ```
 
-The `toJSONSchema(schema, { target: "draft-07", io: "output" })` hook accepts schema objects, promises, and promise-like results without requiring an index-signature cast. Its result must describe the schema's output type. The compiler validates the returned schema structure at runtime. It replaces native conversion for that collection, so exceptional behavior is explicit and local.
+The `toMongoSchema(schema)` hook accepts schema objects, promises, and promise-like results. Its result must describe the stored output type using JSON Schema plus MongoDB's `bsonType` extension. The compiler validates the result at runtime. The old `toJSONSchema` name remains as a deprecated compatibility alias.
 
 ## BSON and custom IDs
 
 Omit `_id` for the driver's default ObjectId behavior. Declare `_id: z.string()` for an application-supplied string ID. MongoDB's restrictions on ID values still apply. If a custom ID schema rejects ObjectIds, supply an ID on every insert, including when the schema marks it optional.
 
-For Date, ObjectId, Decimal128, binary data, or other BSON-specific values, the converter accepts MongoDB's `bsonType` extension. Do not specify both `type` and `bsonType` on the same node.
+For BSON-specific values, use a packaged adapter instead of duplicating the schema. The Zod adapter maps `z.date()`, `z.instanceof(ObjectId)`, and `Binary`/`Uint8Array`/`Buffer` instance schemas. The Effect v4 adapter maps the output side of `Schema.Date`, date codecs, `Schema.Uint8Array`, and its exported `ObjectIdSchema` and `BinarySchema` declarations.
 
 ```ts
+import { zodToMongoSchema } from "@bobosneefdev/zongodb/zod";
+
 const events = {
   schema: z.strictObject({ created: z.date() }),
-  toJSONSchema: () => ({
-    type: "object",
-    required: ["created"],
-    additionalProperties: false,
-    properties: { created: { bsonType: "date" } },
-  }),
+  toMongoSchema: zodToMongoSchema,
 };
 ```
 
-The hook is responsible for matching the declared TypeScript output and preserving intended constraints. There is no global type-remapping option.
+Effect schemas need their Standard Schema wrapper for collection typing:
+
+```ts
+import { Schema } from "effect";
+import {
+  BinarySchema,
+  effectToMongoSchema,
+  ObjectIdSchema,
+} from "@bobosneefdev/zongodb/effect";
+
+const events = {
+  schema: Schema.toStandardSchemaV1(
+    Schema.Struct({
+      created: Schema.Date,
+      owner: ObjectIdSchema,
+      data: BinarySchema,
+    }),
+  ),
+  toMongoSchema: effectToMongoSchema,
+};
+```
+
+For other BSON values or schema libraries, return an explicit Mongo-compatible schema from `toMongoSchema`. Do not specify both `type` and `bsonType` on the same node.
 
 ## Compiler contract
 

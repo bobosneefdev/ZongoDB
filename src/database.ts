@@ -48,17 +48,22 @@ export async function compileCollections<T extends Record<string, DocumentSchema
 		try {
 			if (!name || name.includes("\0") || name.includes("$") || name.startsWith("system."))
 				throw new Error("Invalid collection name");
-			const { schema, toJSONSchema } = definition as CollectionDefinition<DocumentSchema>;
+			const { schema, toMongoSchema, toJSONSchema } =
+				definition as CollectionDefinition<DocumentSchema>;
+			if (toMongoSchema && toJSONSchema)
+				throw new Error("Use either toMongoSchema or toJSONSchema, not both");
 			if (schema?.["~standard"]?.version !== 1)
 				throw new Error("Expected a version 1 standard schema");
-			const json = toJSONSchema
-				? await toJSONSchema(schema, { target: "draft-07", io: "output" })
-				: (schema as StandardJSONSchemaV1)["~standard"].jsonSchema?.output({
-						target: "draft-07",
-					});
+			const json = toMongoSchema
+				? await toMongoSchema(schema)
+				: toJSONSchema
+					? await toJSONSchema(schema, { target: "draft-07", io: "output" })
+					: (schema as StandardJSONSchemaV1)["~standard"].jsonSchema?.output({
+							target: "draft-07",
+						});
 			if (!json)
 				throw new Error(
-					"Schema has no native JSON Schema output converter; supply toJSONSchema",
+					"Schema has no native JSON Schema output converter; supply toMongoSchema",
 				);
 			validators[name] = compileSchema(json);
 		} catch (cause) {

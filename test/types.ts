@@ -46,13 +46,13 @@ async function typeChecks(db: Db) {
 	await compileCollections({
 		documents: {
 			schema: namedSchema,
-			toJSONSchema: (s) => toJsonSchema(s, { target: "draft-7", io: "output" }),
+			toMongoSchema: (s) => toJsonSchema(s, { target: "draft-7", io: "output" }),
 		},
 	});
 	await compileCollections({
 		documents: {
 			schema: namedSchema,
-			toJSONSchema: async (s) => await toJsonSchema(s, { target: "draft-7", io: "output" }),
+			toMongoSchema: async (s) => await toJsonSchema(s, { target: "draft-7", io: "output" }),
 		},
 	});
 	compileSchema(await toJsonSchema(namedSchema, { target: "draft-7", io: "output" }));
@@ -112,7 +112,7 @@ async function typeChecks(db: Db) {
 		collections: {
 			users: {
 				schema: typed,
-				toJSONSchema: () => ({
+				toMongoSchema: () => ({
 					type: "object",
 					properties: { created: { bsonType: "date" } },
 				}),

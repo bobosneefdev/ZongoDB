@@ -8,8 +8,8 @@ This is a hard-cut release from the published Zod-based v4 (and earlier v3). The
 | Library-created connection, implicit localhost | Caller creates and closes `MongoClient` |
 | `{ users: userSchema }` | `{ users: { schema: userSchema, indexes: [...] } }` |
 | Global `indexes` option with `index` keys | Collection-local indexes with `key` (or `rawKey`) |
-| Required Zod peer | Native Standard JSON Schema, or typed schema plus `toJSONSchema` |
-| `customJsonToBsonTypes` | Per-collection `toJSONSchema`, with explicit `bsonType` fields |
+| Required Zod peer | Native Standard JSON Schema, or typed schema plus `toMongoSchema` |
+| `customJsonToBsonTypes` | Per-collection `toMongoSchema`, with explicit `bsonType` fields |
 | `describe("##uniqueItems")` | Actual `uniqueItems: true` in the converted JSON Schema |
 | `zJobTimestamp` / `JobTimestamp` | Define your application's schemas locally |
 | `zObjectId()`, `zBinary()`, `zDate()` and automatic `z.date()` conversion | Use your schema library's types and a per-collection BSON converter |
@@ -35,6 +35,6 @@ All schemas compile before database work starts, but applying validators and ind
 
 Existing v4 indexes keep their `zongo_` names. Declare their exact existing names in v5's `name` option when adopting them (for example, `name: "zongo_createdAt_1"`). Names are no longer prefixed automatically. Match the existing keys and options too; conflicting declarations reject initialization instead of dropping an index. This also applies to TTL indexes: changed expiration settings require an explicit database migration.
 
-The v4 converter used `unrepresentable: "any"` and BSON metadata tags. V5 deliberately removes this fallback: unsupported schema values fail conversion rather than silently becoming unconstrained. `mongoBsonType` and `x-bson` metadata have no special meaning; return explicit `bsonType` properties from `toJSONSchema` instead.
+The v4 converter used `unrepresentable: "any"` and BSON metadata tags. V5 deliberately removes this fallback: unsupported schema values fail conversion rather than silently becoming unconstrained. Use the packaged Zod or Effect adapter for supported native values, or return explicit `bsonType` properties from `toMongoSchema`. The former `toJSONSchema` key remains as a deprecated compatibility alias.
 
 For deployments that manage schema installation separately, use `compileCollections` to obtain validators and apply them using your deployment tooling. Runtime code can then use the driver's typed collections directly.
