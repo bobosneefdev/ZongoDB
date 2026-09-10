@@ -162,8 +162,8 @@ bun run check
 bun run test
 ```
 
-Tests require MongoDB at `mongodb://127.0.0.1:27017`, or `MONGODB_URI`. They create and drop a uniquely named `zongo_v4_test_*` database and do not touch application databases. The package smoke test installs a temporary packed consumer, requiring registry access, and checks Node ESM imports and TypeScript inference without Zod.
+Tests require MongoDB at `mongodb://127.0.0.1:27017`, or `MONGODB_URI`. They create and drop a uniquely named `zongo_v5_test_*` database and do not touch application databases. The package smoke test installs a temporary packed consumer, requiring registry access, and checks Node ESM imports and TypeScript inference without Zod.
 
 `bun run format` applies formatting/lint fixes; `lint` and `check` do not write files. `bun run test:integration` runs database checks; `bun run test:package` builds and verifies the packed package.
 
-See [the v4 migration guide](docs/migration-v4.md) for the intentional breaking changes.
+See [the v5 migration guide](docs/migration-v5.md) for the intentional breaking changes.

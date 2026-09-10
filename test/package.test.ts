@@ -51,7 +51,7 @@ test("packed ESM package imports and infers types without Zod", () => {
 					"@bobosneefdev",
 					"zongodb",
 					"docs",
-					"migration-v4.md",
+					"migration-v5.md",
 				),
 			),
 		).toBe(true);

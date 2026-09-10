@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { toStandardJsonSchema } from "@valibot/to-json-schema";
 import { type } from "arktype";
-import { type Db, MongoClient, ObjectId } from "mongodb";
+import { Binary, type Db, MongoClient, ObjectId } from "mongodb";
 import * as v from "valibot";
 import { z } from "zod";
 import { compileSchema, createZongo, ZongoInitializationError } from "../src";
@@ -9,7 +9,7 @@ import { compileSchema, createZongo, ZongoInitializationError } from "../src";
 const client = new MongoClient(process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017", {
 	serverSelectionTimeoutMS: 3000,
 });
-const databaseName = `zongo_v4_test_${crypto.randomUUID().replaceAll("-", "")}`;
+const databaseName = `zongo_v5_test_${crypto.randomUUID().replaceAll("-", "")}`;
 const db = client.db(databaseName);
 
 beforeAll(async () => {
@@ -171,6 +171,88 @@ describe("MongoDB validation", () => {
 		await expect(
 			db.collection("dates").insertOne({ created: "2026-01-01" }),
 		).rejects.toMatchObject({ code: 121 });
+	});
+
+	test("adopts v4 TTL indexes and validates native BSON fields", async () => {
+		const schema = z.strictObject({
+			ref: z.instanceof(ObjectId),
+			createdAt: z.date(),
+			blob: z.union([z.instanceof(Binary), z.instanceof(Uint8Array)]),
+		});
+		const definition = {
+			schema,
+			toJSONSchema: () => ({
+				type: "object",
+				additionalProperties: false,
+				required: ["ref", "createdAt", "blob"],
+				properties: {
+					ref: { bsonType: "objectId" },
+					createdAt: { bsonType: "date" },
+					blob: { bsonType: "binData" },
+				},
+			}),
+			indexes: [
+				{
+					key: { createdAt: 1 as const },
+					name: "zongo_createdAt_1",
+					expireAfterSeconds: 3600,
+				},
+			],
+		};
+		await db
+			.collection("sessions")
+			.createIndex({ createdAt: 1 }, { name: "zongo_createdAt_1", expireAfterSeconds: 3600 });
+		const result = await createZongo({ db, collections: { sessions: definition } });
+		const indexes = await result.collections.sessions.listIndexes().toArray();
+		expect(indexes.filter((index) => index.name !== "_id_")).toHaveLength(1);
+		expect(
+			indexes.find((index) => index.name === "zongo_createdAt_1")?.expireAfterSeconds,
+		).toBe(3600);
+		for (const blob of [
+			new Binary(new Uint8Array([1, 2])),
+			new Uint8Array([1, 2]),
+			Buffer.from([1, 2]),
+		]) {
+			await result.collections.sessions.insertOne({
+				ref: new ObjectId(),
+				createdAt: new Date(),
+				blob,
+			});
+		}
+		const row = await result.collections.sessions.findOne({});
+		expect(row?.ref).toBeInstanceOf(ObjectId);
+		expect(row?.createdAt).toBeInstanceOf(Date);
+		expect(row?.blob).toBeInstanceOf(Binary);
+		for (const bad of [
+			{ ref: "not-an-object-id" },
+			{ createdAt: "not-a-date" },
+			{ blob: "not-binary" },
+		]) {
+			await expect(
+				db.collection("sessions").insertOne({
+					ref: new ObjectId(),
+					createdAt: new Date(),
+					blob: new Binary(),
+					...bad,
+				}),
+			).rejects.toMatchObject({ code: 121 });
+		}
+		await expect(
+			createZongo({
+				db,
+				collections: {
+					sessions: {
+						...definition,
+						indexes: [{ ...definition.indexes[0], expireAfterSeconds: 7200 }],
+					},
+				},
+			}),
+		).rejects.toMatchObject({ collection: "sessions", operation: "createIndex" });
+		expect(
+			(await result.collections.sessions.listIndexes().toArray()).find(
+				(index) => index.name === "zongo_createdAt_1",
+			)?.expireAfterSeconds,
+		).toBe(3600);
 	});
 
 	test("preserves schema dependencies and nested closed objects", async () => {

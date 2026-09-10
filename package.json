@@ -1,6 +1,6 @@
 {
   "name": "@bobosneefdev/zongodb",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "author": "bobosneefdev",
   "repository": {
     "type": "git",
@@ -38,7 +38,7 @@
     "dist",
     "README.md",
     "LICENSE",
-    "docs/migration-v4.md"
+    "docs/migration-v5.md"
   ],
   "homepage": "https://github.com/bobosneefdev/ZongoDB#readme",
   "keywords": [
