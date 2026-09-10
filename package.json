@@ -1,63 +1,72 @@
 {
-    "name": "@bobosneefdev/zongodb",
-    "version": "3.0.4",
-    "description": "Zod schemas + MongoDB",
-    "packageManager": "bun@1.3.8",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.mjs",
-            "require": "./dist/index.js"
-        }
-    },
-    "directories": {
-        "test": "test"
-    },
-    "publishConfig": {
-        "registry": "https://registry.npmjs.org"
-    },
-    "scripts": {
-        "lint": "biome check --fix",
-        "format": "biome format --write .",
-        "check": "tsc --noEmit",
-        "check:full": "bun run lint && bun run format && bun run check",
-        "build": "tsdown",
-        "build:full": "bun run check:full && bun run build",
-        "test": "bun test",
-        "prepublishOnly": "bun run build:full && bun run test"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/bobosneefdev/ZongoDB.git"
-    },
-    "keywords": [
-        "mongodb",
-        "zod"
-    ],
-    "author": "bobosneefdev",
-    "license": "MIT",
-    "bugs": {
-        "url": "https://github.com/bobosneefdev/ZongoDB/issues"
-    },
-    "homepage": "https://github.com/bobosneefdev/ZongoDB#readme",
-    "devDependencies": {
-        "@biomejs/biome": "^2.4.6",
-        "@types/jest": "^30.0.0",
-        "@types/node": "^25.1.0",
-        "tsdown": "^0.21.0-beta.2",
-        "tsup": "^8.5.1",
-        "typescript": "^5.9.3"
-    },
-    "peerDependencies": {
-        "zod": "^4.3.6",
-        "mongodb": "^7.0.0"
-    },
-    "dependencies": {
-        "dotenv": "^17.2.3"
-    },
-    "files": [
-        "dist",
-        "README.md",
-        "LICENSE"
-    ]
+  "name": "@bobosneefdev/zongodb",
+  "version": "4.0.0",
+  "author": "bobosneefdev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bobosneefdev/ZongoDB.git"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "@standard-community/standard-json": "^0.3.6",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^25.1.0",
+    "@valibot/to-json-schema": "^1.7.1",
+    "arktype": "^2.2.3",
+    "tsdown": "^0.21.0-beta.2",
+    "typescript": "^5.9.3",
+    "valibot": "^1.5.0",
+    "zod": "^4.6.1"
+  },
+  "peerDependencies": {
+    "mongodb": "^7.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "bugs": {
+    "url": "https://github.com/bobosneefdev/ZongoDB/issues"
+  },
+  "description": "Standard schemas, typed MongoDB collections, and database-enforced validation",
+  "directories": {
+    "test": "test"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs/migration-v4.md"
+  ],
+  "homepage": "https://github.com/bobosneefdev/ZongoDB#readme",
+  "keywords": [
+    "mongodb",
+    "standard-schema",
+    "json-schema",
+    "typescript"
+  ],
+  "license": "MIT",
+  "packageManager": "bun@1.4.2",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "check": "tsc --noEmit",
+    "build": "tsdown",
+    "test": "bun run build && bun test",
+    "test:integration": "bun test test/mongo.test.ts",
+    "test:package": "bun run build && bun test test/package.test.ts",
+    "prepublishOnly": "bun run lint && bun run check && bun run test"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  }
 }
