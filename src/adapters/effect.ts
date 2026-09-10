@@ -39,6 +39,7 @@ export function effectToMongoSchema(schema: Schema.Constraint): object {
 	const source = Schema.toRepresentation(Schema.make(markBsonTypes(Schema.toType(schema).ast)));
 	const document = SchemaRepresentation.toJsonSchemaDocument(source, {
 		includeAnnotationKey: (key) => key === "bsonType",
+		onExcessProperty: "error",
 	});
 	const draft7 = JsonSchema.toDocumentDraft07(document);
 	const output = draft7.schema;

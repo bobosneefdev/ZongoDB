@@ -34,10 +34,12 @@ describe("Mongo schema adapters", () => {
 					data: Schema.Uint8Array,
 				}),
 			),
-		).$jsonSchema.properties as Record<string, unknown>;
-		expect(output.created).toEqual({ bsonType: "date" });
-		expect(output.id).toEqual({ bsonType: "objectId" });
-		expect(output.binary).toEqual({ bsonType: "binData" });
-		expect(output.data).toEqual({ bsonType: "binData" });
+		).$jsonSchema;
+		const properties = output.properties as Record<string, unknown>;
+		expect(output.additionalProperties).toBe(false);
+		expect(properties.created).toEqual({ bsonType: "date" });
+		expect(properties.id).toEqual({ bsonType: "objectId" });
+		expect(properties.binary).toEqual({ bsonType: "binData" });
+		expect(properties.data).toEqual({ bsonType: "binData" });
 	});
 });
