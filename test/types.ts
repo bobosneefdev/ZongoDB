@@ -1,10 +1,63 @@
-import type { StandardTypedV1 } from "@standard-schema/spec";
+import { toJsonSchema } from "@standard-community/standard-json";
+import type { StandardJSONSchemaV1, StandardTypedV1 } from "@standard-schema/spec";
 import type { Db, ObjectId, OptionalUnlessRequiredId, WithId } from "mongodb";
 import { z } from "zod";
-import { createZongo, type Paths, type SchemaOutput } from "../src";
+import {
+	compileCollections,
+	compileSchema,
+	createZongo,
+	type Paths,
+	type SchemaOutput,
+} from "../src";
+
+// Generic application helpers must preserve schema types without explicit map arguments.
+function compileNamed<S extends StandardJSONSchemaV1<unknown, { name: string }>>(schema: S) {
+	return compileCollections({ documents: { schema } });
+}
+function createNamed<S extends StandardJSONSchemaV1<unknown, { name: string }>>(db: Db, schema: S) {
+	return createZongo({ db, collections: { documents: { schema } } });
+}
 
 // Compile-only assertions; this function is never run.
 async function typeChecks(db: Db) {
+	const namedSchema = z.object({ name: z.string(), scores: z.object({ 0: z.string() }) });
+	const named = await createNamed(db, namedSchema);
+	await named.collections.documents.insertOne({ name: "Ada", scores: { 0: "A" } });
+	// @ts-expect-error Generic helpers preserve concrete required fields.
+	await named.collections.documents.insertOne({ name: "Ada" });
+	const compiled = await compileNamed(namedSchema);
+	compiled.documents.$jsonSchema;
+	// @ts-expect-error Generic helpers preserve collection names.
+	compiled.missing;
+	const readonlyKey = [
+		["name", 1],
+		["scores.0", -1],
+	] as const;
+	await compileCollections({
+		documents: {
+			schema: namedSchema,
+			indexes: [{ rawKey: readonlyKey }, { key: { "scores.0": 1 } }],
+		},
+	});
+	await createZongo({
+		db,
+		collections: { documents: { schema: namedSchema, indexes: [{ rawKey: readonlyKey }] } },
+	});
+	await compileCollections({
+		documents: {
+			schema: namedSchema,
+			toJSONSchema: (s) => toJsonSchema(s, { target: "draft-7", io: "output" }),
+		},
+	});
+	await compileCollections({
+		documents: {
+			schema: namedSchema,
+			toJSONSchema: async (s) => await toJsonSchema(s, { target: "draft-7", io: "output" }),
+		},
+	});
+	compileSchema(await toJsonSchema(namedSchema, { target: "draft-7", io: "output" }));
+	const numericPath: Paths<{ scores: { 0: string; 1: string } }> = "scores.0";
+	void numericPath;
 	const result = await createZongo({
 		db,
 		collections: {
@@ -51,8 +104,6 @@ async function typeChecks(db: Db) {
 	});
 	// @ts-expect-error Scalar schemas cannot describe documents.
 	await createZongo({ db, collections: { value: { schema: z.string() } } });
-	// @ts-expect-error Array schemas cannot describe documents.
-	await createZongo({ db, collections: { value: { schema: z.array(z.string()) } } });
 	const typed = {} as StandardTypedV1<unknown, { created: Date }>;
 	// @ts-expect-error Typed-only schemas need a converter.
 	await createZongo({ db, collections: { users: { schema: typed } } });

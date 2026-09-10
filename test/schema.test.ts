@@ -146,17 +146,25 @@ describe("schema compilation", () => {
 		const result = await compileCollections({
 			users: {
 				schema,
-				toJSONSchema: async (s, options) => {
+				toJSONSchema: (s, options) => {
 					expect(options).toEqual({ target: "draft-07", io: "output" });
-					return (await toJsonSchema(s, { target: "draft-7", io: "output" })) as Record<
-						string,
-						unknown
-					>;
+					return toJsonSchema(s, { target: "draft-7", io: "output" });
 				},
 			},
 		});
 		expect(result.users).toEqual(
 			compileSchema(schema["~standard"].jsonSchema.output({ target: "draft-07" })),
 		);
+	});
+
+	test("still rejects non-document schema outputs and malformed converter results", async () => {
+		await expect(
+			compileCollections({ items: { schema: z.array(z.string()) } }),
+		).rejects.toMatchObject({ operation: "compile", cause: { name: "SchemaConversionError" } });
+		await expect(
+			compileCollections({
+				items: { schema: z.object({ name: z.string() }), toJSONSchema: async () => [] },
+			}),
+		).rejects.toMatchObject({ operation: "compile", cause: { name: "SchemaConversionError" } });
 	});
 });

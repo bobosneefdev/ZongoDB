@@ -12,7 +12,7 @@ bun add @bobosneefdev/zongodb mongodb
 bun add zod
 ```
 
-ESM only. Requires Node 20.19+ and MongoDB driver 7. Zod is not a runtime dependency.
+ESM only. Requires Node 20.19+, MongoDB driver 7, and TypeScript 5.4+ for type declarations. Zod is not a runtime dependency.
 
 ## Usage
 
@@ -78,15 +78,17 @@ Install [standard-json](https://github.com/standard-community/standard-json) and
 
 ```ts
 import { toJsonSchema } from "@standard-community/standard-json";
+import { compileCollections } from "@bobosneefdev/zongodb";
 
-const users = {
-  schema: z.object({ name: z.string() }),
-  toJSONSchema: async (schema: z.ZodObject<{ name: z.ZodString }>) =>
-    await toJsonSchema(schema, { target: "draft-7", io: "output" }) as Record<string, unknown>,
-};
+const validators = await compileCollections({
+  users: {
+    schema: z.object({ name: z.string() }),
+    toJSONSchema: (schema) => toJsonSchema(schema, { target: "draft-7", io: "output" }),
+  },
+});
 ```
 
-The `toJSONSchema(schema, { target: "draft-07", io: "output" })` hook can be synchronous or asynchronous. Its result must describe the schema's output type. It replaces native conversion for that collection, so exceptional behavior is explicit and local.
+The `toJSONSchema(schema, { target: "draft-07", io: "output" })` hook accepts schema objects, promises, and promise-like results without requiring an index-signature cast. Its result must describe the schema's output type. The compiler validates the returned schema structure at runtime. It replaces native conversion for that collection, so exceptional behavior is explicit and local.
 
 ## BSON and custom IDs
 
@@ -142,7 +144,7 @@ Collection roots must establish an object type, directly or through supported co
 
 ## Indexes and initialization
 
-Indexes live next to their schema and accept MongoDB `CreateIndexesOptions`. `key` suggests inferred document paths (up to eight levels, excluding Date/BSON internals). Use `rawKey` for dynamic or advanced specifications, including ordered tuples or maps:
+Indexes live next to their schema and accept MongoDB `CreateIndexesOptions`. `key` suggests inferred document paths, including numeric object keys (up to eight levels, excluding Date/BSON internals). Use `rawKey` for dynamic or advanced specifications, including ordered tuples or maps. Readonly tuples declared with `as const` are supported:
 
 ```ts
 indexes: [

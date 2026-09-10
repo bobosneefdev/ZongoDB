@@ -6,6 +6,7 @@ import type {
 	CollectionDefinitions,
 	DocumentSchema,
 	MongoValidator,
+	NativeCollectionDefinitions,
 	ZongoCollections,
 } from "./types";
 
@@ -33,6 +34,12 @@ export class ZongoInitializationError extends Error {
 }
 
 /** Generate every validator before performing any database operations. */
+export function compileCollections<T extends Record<string, StandardJSONSchemaV1<unknown, object>>>(
+	definitions: NativeCollectionDefinitions<T>,
+): Promise<{ [K in keyof T]: MongoValidator }>;
+export function compileCollections<T extends Record<string, DocumentSchema>>(
+	definitions: CollectionDefinitions<T>,
+): Promise<{ [K in keyof T]: MongoValidator }>;
 export async function compileCollections<T extends Record<string, DocumentSchema>>(
 	definitions: CollectionDefinitions<T>,
 ): Promise<{ [K in keyof T]: MongoValidator }> {
@@ -62,14 +69,17 @@ export async function compileCollections<T extends Record<string, DocumentSchema
 }
 
 /** The caller owns the Db/client. Resolves only after validators and indexes are installed. */
+export function createZongo<
+	T extends Record<string, StandardJSONSchemaV1<unknown, object>>,
+>(options: { db: Db; collections: NativeCollectionDefinitions<T> }): Promise<ZongoDatabase<T>>;
+export function createZongo<T extends Record<string, DocumentSchema>>(options: {
+	db: Db;
+	collections: CollectionDefinitions<T>;
+}): Promise<ZongoDatabase<T>>;
 export async function createZongo<T extends Record<string, DocumentSchema>>(options: {
 	db: Db;
 	collections: CollectionDefinitions<T>;
-}): Promise<{
-	db: Db;
-	collections: ZongoCollections<T>;
-	validators: { [K in keyof T]: MongoValidator };
-}> {
+}): Promise<ZongoDatabase<T>> {
 	const validators = await compileCollections(options.collections);
 	const completed: InitializationStep[] = [];
 	const collections: Record<string, unknown> = Object.create(null);
@@ -95,6 +105,7 @@ export async function createZongo<T extends Record<string, DocumentSchema>>(opti
 			for (const index of definition.indexes ?? []) {
 				operation = "createIndex";
 				const { key, rawKey, ...indexOptions } = index;
+				// The driver copies index entries into its own Map, including readonly tuples.
 				await collection.createIndex((rawKey ?? key) as IndexSpecification, indexOptions);
 				completed.push({ collection: name, operation });
 			}
@@ -104,3 +115,9 @@ export async function createZongo<T extends Record<string, DocumentSchema>>(opti
 	}
 	return { db: options.db, collections: collections as ZongoCollections<T>, validators };
 }
+
+export type ZongoDatabase<T extends Record<string, DocumentSchema>> = {
+	db: Db;
+	collections: ZongoCollections<T>;
+	validators: { [K in keyof T]: MongoValidator };
+};

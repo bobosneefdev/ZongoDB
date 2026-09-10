@@ -65,7 +65,7 @@ test("packed ESM package imports and infers types without Zod", () => {
 		writeFileSync(
 			join(fixture, "index.ts"),
 			`
-import { createZongo } from "@bobosneefdev/zongodb";
+import { compileCollections, createZongo, type Paths } from "@bobosneefdev/zongodb";
 import type { StandardJSONSchemaV1 } from "@standard-schema/spec";
 import type { Db, ObjectId } from "mongodb";
 declare const db: Db;
@@ -76,6 +76,18 @@ await result.collections.users.insertOne({ name: "Ada" });
 await result.collections.users.insertOne({});
 const row = await result.collections.users.findOne({});
 const id: ObjectId | undefined = row?._id;
+function compileWrapped<S extends StandardJSONSchemaV1<unknown, { name: string }>>(schema: S) {
+  return compileCollections({ users: { schema } });
+}
+function createWrapped<S extends StandardJSONSchemaV1<unknown, { name: string }>>(schema: S) {
+  return createZongo({ db, collections: { users: { schema } } });
+}
+const wrapped = await createWrapped(schema);
+// @ts-expect-error Wrapper inference must not widen the document.
+await wrapped.collections.users.insertOne({ name: 123 });
+const keys = [["name", 1]] as const;
+await compileCollections({ users: { schema, indexes: [{ rawKey: keys }] } });
+const path: Paths<{ values: { 0: string } }> = "values.0";
 `,
 		);
 		writeFileSync(

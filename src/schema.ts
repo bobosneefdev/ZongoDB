@@ -105,7 +105,7 @@ function jsonValue(value: unknown, path: string, parents = new Set<object>()): v
 }
 
 /** Compile a Draft 7 document schema without connecting to MongoDB or mutating the input. */
-export function compileSchema(input: Record<string, unknown>): MongoValidator {
+export function compileSchema(input: object): MongoValidator {
 	const root = record(input, "#");
 	const active = new Set<object>();
 	let expandedNodes = 0;

@@ -299,6 +299,43 @@ describe("MongoDB validation", () => {
 		await expect(db.collection("existing").insertOne({})).rejects.toMatchObject({ code: 121 });
 	});
 
+	test("readonly compound index tuples preserve order without mutation", async () => {
+		const keys = Object.freeze([
+			Object.freeze(["name", 1] as const),
+			Object.freeze(["rank", -1] as const),
+		] as const);
+		const result = await createZongo({
+			db,
+			collections: {
+				ordered: {
+					schema: z.object({
+						name: z.string(),
+						rank: z.number(),
+						scores: z.object({ 0: z.string() }),
+					}),
+					indexes: [
+						{ rawKey: keys, name: "ordered_fields" },
+						{ key: { "scores.0": 1 }, name: "numeric_path" },
+					],
+				},
+			},
+		});
+		const indexes = await result.collections.ordered.listIndexes().toArray();
+		expect(
+			Object.entries(indexes.find((index) => index.name === "ordered_fields")!.key),
+		).toEqual([
+			["name", 1],
+			["rank", -1],
+		]);
+		expect(indexes.find((index) => index.name === "numeric_path")!.key).toEqual({
+			"scores.0": 1,
+		});
+		expect(keys).toEqual([
+			["name", 1],
+			["rank", -1],
+		]);
+	});
+
 	test("compile failure happens before any collection is created", async () => {
 		await expect(
 			createZongo({

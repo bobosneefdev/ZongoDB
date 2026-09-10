@@ -17,33 +17,45 @@ export type Paths<T, Depth extends unknown[] = []> = Depth["length"] extends 8
 					| `${number}.${Paths<Item, [...Depth, unknown]>}`
 			: T extends object
 				? {
-						[K in keyof T & string]:
-							| K
+						[K in keyof T & (string | number)]:
+							| `${K}`
 							| `${K}.${Paths<NonNullable<T[K]>, [...Depth, unknown]>}`;
-					}[keyof T & string]
+					}[keyof T & (string | number)]
 				: never;
+
+/** The driver reads tuple keys without mutating them. */
+export type ZongoIndexSpecification =
+	| IndexSpecification
+	| readonly [string, IndexDirection]
+	| readonly (readonly [string, IndexDirection])[];
 
 export type ZongoIndex<T extends object> = CreateIndexesOptions &
 	(
 		| { key: Partial<Record<Paths<T> | "_id", IndexDirection>>; rawKey?: never }
-		| { rawKey: IndexSpecification; key?: never }
+		| { rawKey: ZongoIndexSpecification; key?: never }
 	);
 
 /** Return a Draft 7 document schema, optionally using MongoDB's bsonType extension. */
 export type SchemaConverter<S extends DocumentSchema> = (
 	schema: S,
 	options: { target: "draft-07"; io: "output" },
-) => Record<string, unknown> | Promise<Record<string, unknown>>;
+) => object | PromiseLike<object>;
 
-export type CollectionDefinition<S extends DocumentSchema> = {
-	schema: S &
-		(SchemaOutput<S> extends readonly unknown[] | Atomic | ((...args: never[]) => unknown)
-			? never
-			: unknown);
+type CollectionOptions<S extends DocumentSchema> = {
+	schema: S;
 	indexes?: readonly ZongoIndex<SchemaOutput<S>>[];
-} & (S extends StandardJSONSchemaV1
-	? { toJSONSchema?: SchemaConverter<S> }
-	: { toJSONSchema: SchemaConverter<S> });
+	toJSONSchema?: SchemaConverter<NoInfer<S>>;
+};
+
+export type CollectionDefinition<S extends DocumentSchema> = CollectionOptions<S> &
+	(S extends StandardJSONSchemaV1 ? unknown : { toJSONSchema: SchemaConverter<NoInfer<S>> });
+
+/** A direct inference path for native schemas, including generic application wrappers. */
+export type NativeCollectionDefinitions<
+	T extends Record<string, StandardJSONSchemaV1<unknown, object>>,
+> = {
+	[K in keyof T]: CollectionOptions<T[K]>;
+};
 
 export type CollectionDefinitions<T extends Record<string, DocumentSchema>> = {
 	[K in keyof T]: CollectionDefinition<T[K]>;
