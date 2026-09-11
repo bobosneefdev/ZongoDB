@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { toStandardJsonSchema } from "@valibot/to-json-schema";
 import { type } from "arktype";
 import { Schema } from "effect";
-import { Binary, type Db, MongoClient, ObjectId } from "mongodb";
+import {
+	Binary,
+	type CreateIndexesOptions,
+	type Db,
+	type IndexSpecification,
+	MongoClient,
+	ObjectId,
+} from "mongodb";
 import * as v from "valibot";
 import { z } from "zod";
 import { compileSchema, createZongo, ZongoInitializationError } from "../src";
@@ -396,6 +403,112 @@ describe("MongoDB validation", () => {
 				(await collection.listIndexes().toArray()).filter(({ name }) => name !== "_id_"),
 			).toHaveLength(1);
 		}
+	});
+
+	test("delegates specialized index equivalence to MongoDB", async () => {
+		const cases: {
+			name: string;
+			key: IndexSpecification;
+			existing: CreateIndexesOptions;
+			requested: CreateIndexesOptions;
+			accepted: boolean;
+		}[] = [
+			{
+				name: "danish",
+				key: { value: 1 },
+				existing: { collation: { locale: "da" } },
+				requested: { collation: { locale: "da" } },
+				accepted: true,
+			},
+			{ name: "text", key: { value: "text" }, existing: {}, requested: {}, accepted: true },
+			{
+				name: "text_weights",
+				key: { value: "text" },
+				existing: { weights: { value: 2 } },
+				requested: { weights: { value: 3 } },
+				accepted: false,
+			},
+			{
+				name: "wildcard",
+				key: { "$**": 1 },
+				existing: { wildcardProjection: { a: 1 } },
+				requested: { wildcardProjection: { b: 1 } },
+				accepted: false,
+			},
+			{
+				name: "geo",
+				key: { value: "2d" },
+				existing: { bits: 20 },
+				requested: { bits: 22 },
+				accepted: false,
+			},
+			{
+				name: "hidden",
+				key: { value: 1 },
+				existing: { hidden: true },
+				requested: {},
+				accepted: false,
+			},
+			{
+				name: "embedded_filter",
+				key: { value: 1 },
+				existing: { partialFilterExpression: { obj: { $eq: { a: 1, b: 2 } } } },
+				requested: { partialFilterExpression: { obj: { $eq: { b: 2, a: 1 } } } },
+				accepted: false,
+			},
+		];
+		for (const { name, key, existing, requested, accepted } of cases) {
+			const collectionName = `specialized_${name}`;
+			const collection = db.collection(collectionName);
+			await collection.createIndex(key, { ...existing, name: "legacy" });
+			const before = await collection.listIndexes().toArray();
+			const initialize = () =>
+				createZongo({
+					db,
+					collections: {
+						[collectionName]: {
+							schema: z.object({ value: z.string() }),
+							indexes: [{ rawKey: key, ...requested, name: "current" }],
+						},
+					},
+				});
+			if (accepted) {
+				await initialize();
+				await initialize();
+			} else {
+				await expect(initialize()).rejects.toMatchObject({
+					collection: collectionName,
+					operation: "createIndex",
+				});
+			}
+			expect(await collection.listIndexes().toArray()).toEqual(before);
+		}
+	});
+
+	test("checks all same-key candidates and refreshes after creating an index", async () => {
+		const collection = await db.createCollection("index_candidates", {
+			collation: { locale: "da" },
+		});
+		await collection.createIndex({ value: 1 }, { name: "ordinary" });
+		await collection.createIndex({ value: 1 }, { name: "unique", unique: true });
+		const result = await createZongo({
+			db,
+			collections: {
+				index_candidates: {
+					schema: z.object({ value: z.string(), other: z.string() }),
+					indexes: [
+						{ key: { value: 1 }, unique: true, name: "adopt_unique" },
+						{ key: { other: 1 }, name: "new_index" },
+						{ key: { other: 1 }, name: "adopt_new_index" },
+					],
+				},
+			},
+		});
+		expect(
+			(await result.collections.index_candidates.listIndexes().toArray()).map(
+				({ name }) => name,
+			),
+		).toEqual(["_id_", "ordinary", "unique", "new_index"]);
 	});
 
 	test("readonly compound index tuples preserve order without mutation", async () => {

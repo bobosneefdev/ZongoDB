@@ -1,12 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { StandardJSONSchemaV1 } from "@standard-schema/spec";
-import type {
-	CreateIndexesOptions,
-	Db,
-	IndexDescriptionInfo,
-	IndexDirection,
-	IndexSpecification,
-} from "mongodb";
+import type { Db, IndexDescriptionInfo, IndexDirection, IndexSpecification } from "mongodb";
 import { compileSchema } from "./schema";
 import type {
 	CollectionDefinition,
@@ -58,38 +52,6 @@ const indexKeys = (specification: IndexSpecification): [string, IndexDirection][
 	}
 	return [...keys];
 };
-
-const collation = (value: Record<string, unknown> | undefined) => {
-	if (!value || value.locale === "simple") return { locale: "simple" };
-	return {
-		locale: value.locale,
-		caseLevel: value.caseLevel ?? false,
-		caseFirst: value.caseFirst ?? "off",
-		strength: value.strength ?? 3,
-		numericOrdering: value.numericOrdering ?? false,
-		alternate: value.alternate ?? "non-ignorable",
-		maxVariable: value.maxVariable ?? "punct",
-		normalization: value.normalization ?? false,
-		backwards: value.backwards ?? false,
-	};
-};
-
-const sameIndex = (
-	existing: IndexDescriptionInfo,
-	options: CreateIndexesOptions,
-	defaultCollation?: Record<string, unknown>,
-) =>
-	Boolean(existing.unique) === Boolean(options.unique) &&
-	Boolean(existing.sparse) === Boolean(options.sparse) &&
-	(existing.expireAfterSeconds ?? null) === (options.expireAfterSeconds ?? null) &&
-	isDeepStrictEqual(
-		existing.partialFilterExpression ?? null,
-		options.partialFilterExpression ?? null,
-	) &&
-	isDeepStrictEqual(
-		collation(existing.collation as Record<string, unknown> | undefined),
-		collation((options.collation ?? defaultCollation) as Record<string, unknown> | undefined),
-	);
 
 /** Generate every validator before performing any database operations. */
 export function compileCollections<T extends Record<string, StandardJSONSchemaV1<unknown, object>>>(
@@ -165,32 +127,52 @@ export async function createZongo<T extends Record<string, DocumentSchema>>(opti
 			completed.push({ collection: name, operation });
 			const collection = options.db.collection(name);
 			collections[name] = collection;
-			const info = definition.indexes?.length
-				? ((await options.db.listCollections({ name }, { nameOnly: false }).next()) as {
-						options?: { collation?: Record<string, unknown> };
-					} | null)
-				: null;
-			const defaultCollation = info?.options?.collation;
+			let existingIndexes: IndexDescriptionInfo[] | undefined;
 			for (const index of definition.indexes ?? []) {
 				operation = "createIndex";
 				const { key, rawKey, ...indexOptions } = index;
 				const specification = (rawKey ?? key) as IndexSpecification;
 				const keys = indexKeys(specification);
-				const sameKeys = (await collection.listIndexes().toArray()).filter((existing) =>
-					isDeepStrictEqual(Object.entries(existing.key), keys),
+				existingIndexes ??= await collection.listIndexes().toArray();
+				const candidates = existingIndexes.filter((existing) =>
+					keys.some(([, direction]) => direction === "text")
+						? existing.key._fts === "text"
+						: isDeepStrictEqual(Object.entries(existing.key), keys),
 				);
-				if (
-					sameKeys.length > 0 &&
-					!sameKeys.some((existing) =>
-						sameIndex(existing, indexOptions, defaultCollation),
-					)
-				)
-					throw new Error(
-						`Index keys already exist with incompatible options: ${sameKeys.map(({ name }) => name).join(", ")}`,
-					);
-				// The driver copies index entries into its own Map, including readonly tuples.
-				if (sameKeys.length === 0)
+				if (candidates.length === 0) {
 					await collection.createIndex(specification, indexOptions);
+					// Refresh lazily: MongoDB normalizes stored index keys and options.
+					existingIndexes = undefined;
+				} else {
+					let conflict: unknown;
+					for (const existing of candidates) {
+						if (Boolean(existing.hidden) !== Boolean(indexOptions.hidden)) {
+							conflict = new Error(
+								`Index "${existing.name}" has an incompatible hidden setting`,
+							);
+							continue;
+						}
+						try {
+							// Reuse the name; let MongoDB compare effective options, including locale defaults.
+							await collection.createIndex(specification, {
+								...indexOptions,
+								name: existing.name,
+							});
+							conflict = undefined;
+							break;
+						} catch (error) {
+							if (
+								!error ||
+								typeof error !== "object" ||
+								!("code" in error) ||
+								(error.code !== 85 && error.code !== 86)
+							)
+								throw error;
+							conflict = error;
+						}
+					}
+					if (conflict) throw conflict;
+				}
 				completed.push({ collection: name, operation });
 			}
 		} catch (cause) {
