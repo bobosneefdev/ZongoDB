@@ -312,6 +312,92 @@ describe("MongoDB validation", () => {
 		await expect(db.collection("existing").insertOne({})).rejects.toMatchObject({ code: 121 });
 	});
 
+	test("reuses equivalent differently named indexes across repeated initialization", async () => {
+		const collection = db.collection("equivalent_indexes");
+		await collection.createIndex(
+			{ name: 1, active: 1 },
+			{
+				name: "legacy_partial",
+				unique: true,
+				partialFilterExpression: { active: true },
+				collation: { locale: "en", strength: 2 },
+			},
+		);
+		await collection.createIndex(
+			{ expiresAt: 1 },
+			{ name: "legacy_ttl", sparse: true, expireAfterSeconds: 60 },
+		);
+		const definition = {
+			schema: z.object({
+				name: z.string(),
+				active: z.boolean(),
+				expiresAt: z.string().optional(),
+			}),
+			indexes: [
+				{
+					key: { name: 1 as const, active: 1 as const },
+					name: "current_partial",
+					unique: true,
+					partialFilterExpression: { active: true },
+					collation: { locale: "en", strength: 2 },
+				},
+				{
+					key: { expiresAt: 1 as const },
+					name: "current_ttl",
+					sparse: true,
+					expireAfterSeconds: 60,
+				},
+			],
+		};
+		await createZongo({ db, collections: { equivalent_indexes: definition } });
+		await createZongo({ db, collections: { equivalent_indexes: definition } });
+		expect(
+			(await collection.listIndexes().toArray())
+				.filter(({ name }) => name !== "_id_")
+				.map(({ name }) => name),
+		).toEqual(["legacy_partial", "legacy_ttl"]);
+	});
+
+	test("rejects same-key indexes with incompatible effective options", async () => {
+		const cases = [
+			[{ unique: true }, {}],
+			[
+				{ partialFilterExpression: { active: true } },
+				{ partialFilterExpression: { active: false } },
+			],
+			[{ expireAfterSeconds: 60 }, { expireAfterSeconds: 120 }],
+			[{ sparse: true }, {}],
+			[
+				{ collation: { locale: "en", strength: 2 } },
+				{ collation: { locale: "en", strength: 1 } },
+			],
+		] as const;
+		for (const [position, [existingOptions, requestedOptions]] of cases.entries()) {
+			const name = `option_conflict_${position}`;
+			const collection = db.collection(name);
+			await collection.createIndex({ value: 1 }, { name: "existing", ...existingOptions });
+			await expect(
+				createZongo({
+					db,
+					collections: {
+						[name]: {
+							schema: z.object({
+								value: z.string(),
+								active: z.boolean(),
+							}),
+							indexes: [
+								{ key: { value: 1 }, name: "requested", ...requestedOptions },
+							],
+						},
+					},
+				}),
+			).rejects.toMatchObject({ collection: name, operation: "createIndex" });
+			expect(
+				(await collection.listIndexes().toArray()).filter(({ name }) => name !== "_id_"),
+			).toHaveLength(1);
+		}
+	});
+
 	test("readonly compound index tuples preserve order without mutation", async () => {
 		const keys = Object.freeze([
 			Object.freeze(["name", 1] as const),

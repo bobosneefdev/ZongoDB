@@ -172,7 +172,7 @@ indexes: [
 ]
 ```
 
-Initialization is additive for indexes: no deletion or automatic replacement. Existing collections receive `collMod` with strict/error validation. Existing data is not scanned, repaired, or migrated. All schemas compile first, but database changes across collections are not atomic; inspect `completed` after a failure. Manage destructive changes through your own migrations.
+Initialization is additive for indexes: an existing index is reused when its ordered keys, uniqueness, partial filter, TTL, sparse setting, and collation match, regardless of name. Same-key option conflicts fail explicitly; indexes are never deleted or automatically replaced. Existing collections receive `collMod` with strict/error validation. Existing data is not scanned, repaired, or migrated. All schemas compile first, but database changes across collections are not atomic; inspect `completed` after a failure. Manage destructive changes through your own migrations.
 
 ## Development
 

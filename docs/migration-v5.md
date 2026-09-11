@@ -33,7 +33,7 @@ Initialization does not scan or repair existing documents. Existing invalid docu
 
 All schemas compile before database work starts, but applying validators and indexes across collections is not atomic. `ZongoInitializationError.completed` records successful operations before a failure. No automatic rollback is attempted. Indexes are never deleted; incompatible index changes need an explicit migration.
 
-Existing v4 indexes keep their `zongo_` names. Declare their exact existing names in v5's `name` option when adopting them (for example, `name: "zongo_createdAt_1"`). Names are no longer prefixed automatically. Match the existing keys and options too; conflicting declarations reject initialization instead of dropping an index. This also applies to TTL indexes: changed expiration settings require an explicit database migration.
+Existing v4 indexes keep their `zongo_` names and are adopted regardless of the declared name when their ordered keys and effective options match. New names are no longer prefixed automatically. Conflicting uniqueness, partial filter, TTL, sparse, or collation options reject initialization instead of dropping or rebuilding an index. Changed expiration settings require an explicit database migration.
 
 The v4 converter used `unrepresentable: "any"` and BSON metadata tags. V5 deliberately removes this fallback: unsupported schema values fail conversion rather than silently becoming unconstrained. Use the packaged Zod or Effect adapter for supported native values, or return explicit `bsonType` properties from `toMongoSchema`. The former `toJSONSchema` key remains as a deprecated compatibility alias.
 

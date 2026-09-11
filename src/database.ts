@@ -1,5 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
 import type { StandardJSONSchemaV1 } from "@standard-schema/spec";
-import type { Db, IndexSpecification } from "mongodb";
+import type {
+	CreateIndexesOptions,
+	Db,
+	IndexDescriptionInfo,
+	IndexDirection,
+	IndexSpecification,
+} from "mongodb";
 import { compileSchema } from "./schema";
 import type {
 	CollectionDefinition,
@@ -32,6 +39,57 @@ export class ZongoInitializationError extends Error {
 		this.completed = [...completed];
 	}
 }
+
+const indexKeys = (specification: IndexSpecification): [string, IndexDirection][] => {
+	const isTuple =
+		Array.isArray(specification) &&
+		specification.length === 2 &&
+		typeof specification[0] === "string" &&
+		(typeof specification[1] === "number" ||
+			["2d", "2dsphere", "text", "geoHaystack"].includes(specification[1] as string));
+	const parts = !Array.isArray(specification) || isTuple ? [specification] : specification;
+	const keys = new Map<string, IndexDirection>();
+	for (const part of parts) {
+		if (typeof part === "string") keys.set(part, 1);
+		else if (Array.isArray(part)) keys.set(part[0], part[1] ?? 1);
+		else
+			for (const [field, direction] of part instanceof Map ? part : Object.entries(part))
+				keys.set(field, direction as IndexDirection);
+	}
+	return [...keys];
+};
+
+const collation = (value: Record<string, unknown> | undefined) => {
+	if (!value || value.locale === "simple") return { locale: "simple" };
+	return {
+		locale: value.locale,
+		caseLevel: value.caseLevel ?? false,
+		caseFirst: value.caseFirst ?? "off",
+		strength: value.strength ?? 3,
+		numericOrdering: value.numericOrdering ?? false,
+		alternate: value.alternate ?? "non-ignorable",
+		maxVariable: value.maxVariable ?? "punct",
+		normalization: value.normalization ?? false,
+		backwards: value.backwards ?? false,
+	};
+};
+
+const sameIndex = (
+	existing: IndexDescriptionInfo,
+	options: CreateIndexesOptions,
+	defaultCollation?: Record<string, unknown>,
+) =>
+	Boolean(existing.unique) === Boolean(options.unique) &&
+	Boolean(existing.sparse) === Boolean(options.sparse) &&
+	(existing.expireAfterSeconds ?? null) === (options.expireAfterSeconds ?? null) &&
+	isDeepStrictEqual(
+		existing.partialFilterExpression ?? null,
+		options.partialFilterExpression ?? null,
+	) &&
+	isDeepStrictEqual(
+		collation(existing.collation as Record<string, unknown> | undefined),
+		collation((options.collation ?? defaultCollation) as Record<string, unknown> | undefined),
+	);
 
 /** Generate every validator before performing any database operations. */
 export function compileCollections<T extends Record<string, StandardJSONSchemaV1<unknown, object>>>(
@@ -107,11 +165,32 @@ export async function createZongo<T extends Record<string, DocumentSchema>>(opti
 			completed.push({ collection: name, operation });
 			const collection = options.db.collection(name);
 			collections[name] = collection;
+			const info = definition.indexes?.length
+				? ((await options.db.listCollections({ name }, { nameOnly: false }).next()) as {
+						options?: { collation?: Record<string, unknown> };
+					} | null)
+				: null;
+			const defaultCollation = info?.options?.collation;
 			for (const index of definition.indexes ?? []) {
 				operation = "createIndex";
 				const { key, rawKey, ...indexOptions } = index;
+				const specification = (rawKey ?? key) as IndexSpecification;
+				const keys = indexKeys(specification);
+				const sameKeys = (await collection.listIndexes().toArray()).filter((existing) =>
+					isDeepStrictEqual(Object.entries(existing.key), keys),
+				);
+				if (
+					sameKeys.length > 0 &&
+					!sameKeys.some((existing) =>
+						sameIndex(existing, indexOptions, defaultCollation),
+					)
+				)
+					throw new Error(
+						`Index keys already exist with incompatible options: ${sameKeys.map(({ name }) => name).join(", ")}`,
+					);
 				// The driver copies index entries into its own Map, including readonly tuples.
-				await collection.createIndex((rawKey ?? key) as IndexSpecification, indexOptions);
+				if (sameKeys.length === 0)
+					await collection.createIndex(specification, indexOptions);
 				completed.push({ collection: name, operation });
 			}
 		} catch (cause) {
